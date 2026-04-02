@@ -15,7 +15,7 @@ schedule:
 jobs:
   deep_rethink_mission:
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # 建立防爆防禦：若執行超過 30 分鐘則自動終止
+    timeout-minutes: 130 # 建立防爆防禦：若執行超過 130 分鐘則自動終止
 
     steps:
     - name: Checkout repository # 檢出目前的程式碼倉庫
