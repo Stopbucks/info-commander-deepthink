@@ -65,7 +65,7 @@ def call_gemini_with_fallback(s, r2_path, prompt):
             try:
                 g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={s['GEMINI_KEY']}" 
                 payload = {"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/ogg", "data": b64_audio}}]}]} 
-                resp = requests.post(g_url, json=payload, timeout=300) 
+                resp = requests.post(g_url, json=payload, timeout=900) 
                 
                 if resp.status_code == 200:
                     res_json = resp.json() 
