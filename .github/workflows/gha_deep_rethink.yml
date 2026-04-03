@@ -1,45 +1,64 @@
+# =========================================================
+# 📝 任務簡報：GHA 議題深度再思產線 (Deep Rethink Mission)
+# ---------------------------------------------------------
+# 🎯 任務目標：
+#   當指揮官在 Telegram 對特定情報按下「回覆」並下達指令時，
+#   本工作流將被喚醒，調度 AI 執行逆向工程分析。
+#
+# ⚙️ 工作流程 (Workflow)：
+#   1. 接收觸發：來自 Vercel 的 Webhook 訊號 (Repository Dispatch)。
+#   2. 環境部署：開啟 Ubuntu 虛擬機並配置 Python 3.10 環境。
+#   3. 套件補給：安裝 Supabase、Requests 與 HTTPX 等必要武裝。
+#   4. 核心執行：執行 deep_rethink_mission.py。
+#      - 從 Supabase 抓取任務 ID 與 Prompt。
+#      - 從 Cloudflare R2 下載對應音檔。
+#      - 召喚 Gemini 進行深度轉譯與分析。
+#      - 將結果寫回 Supabase 並打包 .txt 檔案空投至 Telegram。
+# =========================================================
+
 name: GHA Deep Rethink (議題深度再思產線)
 
 on:
-  # 1. 允許 Vercel 透過 API 隨時瞬間喚醒 (隨選即戰)
+  # 1. 遠端調度：允許 Vercel 透過 API 隨時瞬間喚醒 (隨選即戰)
   repository_dispatch:
     types: [trigger-deep-rethink]
   
-  # 2. 保底巡邏：每日台北時間 05:43 啟動，處理之前滿載失敗的任務
-schedule:
+  # 2. 定時巡邏：每日台北時間 05:43 啟動 (UTC 21:43)，處理漏網之魚
+  schedule:
     - cron: '43 21 * * *'
     
-  # 3. 允許從 GitHub UI 手動啟動
+  # 3. 手動演習：允許指揮官從 GitHub UI 手動啟動測試
   workflow_dispatch: 
 
 jobs:
   deep_rethink_mission:
     runs-on: ubuntu-latest
-    timeout-minutes: 130 # 建立防爆防禦：若執行超過 130 分鐘則自動終止
+    timeout-minutes: 130 # 🛡️ 安全防護：若執行超過 130 分鐘則自動斷電
 
     steps:
-    - name: Checkout repository # 檢出目前的程式碼倉庫
-      uses: actions/checkout@v4
+      - name: 🛡️ 檢出作戰代碼 (Checkout)
+        uses: actions/checkout@v4
 
-    - name: Set up Python 3.10 # 部署 Python 運行環境
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-        cache: 'pip' # 使用快取加速套件安裝過程
+      - name: 🐍 配置 Python 3.10 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip' # 使用快取加速套件安裝
 
-    - name: Install Dependencies # 安裝必要的武器套件
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: 📦 安裝必要武裝 (Dependencies)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
     
-    - name: Execute Rethink Mission # 執行 Python 核心逆向工程程式碼
-      env:
-        WORKER_ID: "DEEP_RETHINK_STATION" # 標記此任務節點代號
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}  
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}  
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}  
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}  
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}  
-        R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}  
-      run: |
-        python deep_rethink_mission.py # 啟動核心邏輯
+      - name: 🚀 執行深度再思任務 (Execute)
+        env:
+          WORKER_ID: "DEEP_RETHINK_STATION"
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}  
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}  
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}  
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}  
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}  
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}  
+        run: |
+          # 啟動核心 Python 程式碼
+          python deep_rethink_mission.py
