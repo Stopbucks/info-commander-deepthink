@@ -72,20 +72,38 @@ def call_gemini_with_fallback(s, r2_path, prompt):
                 
     return None, "FAILED_ALL_MODELS" 
 
+
 # =========================================================
-# 🎙️ 通訊發報站
+# 🎙️ 通訊發報站 (升級：1500字門檻，雙軌預覽與 TXT 空投機制)
 # =========================================================
 def send_rethink_report(s, title, result):
-    """將翻譯結果寄送至 Telegram"""
+    """將翻譯結果寄送至 Telegram，超載則截斷預覽並空投全文檔案"""
     safe_title = str(title).replace("*", "") 
-    report_msg = f"🔍 *【深度再思戰報】*\n📌 *主題：{safe_title}*\n\n{result[:3500]}" 
-    url = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendMessage" 
-    payload = {"chat_id": s["TG_CHAT"], "text": report_msg, "parse_mode": "Markdown"} 
+    
     try:
-        requests.post(url, json=payload, timeout=15) 
+        # 🛡️ 視覺防線設定：小於等於 1500 字，全文舒適閱讀
+        if len(result) <= 1500:
+            report_msg = f"🔍 *【深度再思戰報】*\n📌 *主題：{safe_title}*\n\n{result}" 
+            url = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendMessage" 
+            payload = {"chat_id": s["TG_CHAT"], "text": report_msg, "parse_mode": "Markdown"} 
+            requests.post(url, json=payload, timeout=15) 
+        
+        # 🛡️ 超載防禦設定：大於 1500 字，發送 1000 字預覽 + 附件空投
+        else:
+            # 1. 發送 1000 字預覽文字
+            preview_text = result[:1000]
+            notify_msg = f"🔍 *【深度再思：巨量情報預覽】*\n📌 *主題：{safe_title}*\n\n{preview_text}...\n\n*(⚠️ 報告指揮官，本情報總字數高達 {len(result)} 字。為保持版面簡潔，全文已自動打包為 .txt 檔案，請參閱下方附件！)*"
+            url_msg = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendMessage"
+            requests.post(url_msg, json={"chat_id": s["TG_CHAT"], "text": notify_msg, "parse_mode": "Markdown"}, timeout=15)
+            
+            # 2. 呼叫 TG sendDocument 動態生成純文字檔並傳送
+            url_doc = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendDocument"
+            files = {'document': (f"深度戰報_{safe_title[:15]}.txt", result.encode('utf-8'))}
+            data = {'chat_id': s["TG_CHAT"]}
+            requests.post(url_doc, data=data, files=files, timeout=30)
+            
     except Exception as e:
         print(f"⚠️ 發報失敗: {e}")
-
 # =========================================================
 # 🚀 任務總部署 (Mission Entry)
 # =========================================================
