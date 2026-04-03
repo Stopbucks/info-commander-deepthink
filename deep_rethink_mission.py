@@ -1,11 +1,12 @@
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V1.9 時光刺客 - 詢問模型防崩潰版)
+# 程式碼：deep_rethink_mission.py (V2.0 - 提示詞轉移_詢問模型防崩潰版)
 # 職責：處理 mission_reverse 任務，具備最高韌性梯隊與報告溯源功能。
 # 特色：終極防拒絕梯隊 (-001固定版)、報告內建模型名稱溯源。
 # ---------------------------------------------------------
 import os, time, random, base64, requests, gc # 引入核心工具
 from datetime import datetime, timezone # 處理時間戳
 from supabase import create_client # 資料庫連線工具
+from prompt_templates import build_prompt
 
 # =========================================================
 # ⚙️ 初始化配置與連線
@@ -110,10 +111,11 @@ def send_rethink_report(s, title, result, used_model):
 # =========================================================
 # 🚀 任務總部署 (Mission Entry)
 # =========================================================
+
 def run_rethink_mission():
     """主程序：掃描 pending 任務並執行 AI 轉譯"""
     start_time = time.time() 
-    print(f"🚀 [TIME_ASSASSIN] V1.8 產線啟動，最高韌性防禦陣型就緒...") 
+    print(f"🚀 [TIME_ASSASSIN] V2.0 產線啟動，動態提示詞引擎已掛載...") 
     
     start_jitter = random.uniform(2.0, 6.0) 
     print(f"🎲 [DB Jitter] 啟動冷卻 {start_jitter:.1f} 秒...")
@@ -131,7 +133,9 @@ def run_rethink_mission():
         for task in tasks:
             if time.time() - start_time > 7200: break 
 
-            t_id = task['id']; q_id = task.get('task_id'); prompt = task.get('target_prompt', '請全文翻譯') 
+            t_id = task['id']; q_id = task.get('task_id')
+            # 取得原始指令 (例如："/A", "古巴經濟 /b" 等)
+            raw_command = task.get('target_prompt', '').strip() 
             
             if not q_id:
                 sb.table("mission_reverse").update({"status": "not_found", "error_log": "未提供任務 ID"}).eq("id", t_id).execute()
@@ -149,13 +153,17 @@ def run_rethink_mission():
 
             sb.table("mission_reverse").update({"status": "processing"}).eq("id", t_id).execute() 
             
-            # ⚡ 接收三個變數：翻譯文本、狀態碼、使用的模型
-            final_text, status_code, used_model = call_gemini_with_fallback(s, r2_path, prompt) 
+            # ⚡ 動態提示詞解析 (呼叫外部軍火庫)
+            # 將使用者在 TG 群組輸入的字串交給解析器，產生最終版軍令
+            actual_prompt = build_prompt(raw_command)
+            
+            # ⚡ 將「組裝完成的長篇提示詞」餵給 AI，並接收三變數回傳
+            final_text, status_code, used_model = call_gemini_with_fallback(s, r2_path, actual_prompt) 
             
             if status_code == "SUCCESS":
                 sb.table("mission_reverse").update({"status": "completed", "result_text": final_text, "email_sent": True}).eq("id", t_id).execute() 
-                # ⚡ 傳遞模型名稱給發報站
-                send_rethink_report(s, title, final_text, used_model) 
+                # ⚡ 傳遞模型名稱與「原始指令(raw_command)」給發報站
+                send_rethink_report(s, title, final_text, used_model, raw_command) 
                 print(f"🎉 任務 {t_id[:8]} 完成！負責模型：{used_model}") 
             else:
                 sb.table("mission_reverse").update({"status": "failed_rate_limit", "error_log": status_code}).eq("id", t_id).execute() 
