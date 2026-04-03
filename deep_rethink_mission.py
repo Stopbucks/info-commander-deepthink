@@ -1,6 +1,7 @@
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V1.2 時光刺客 - 雙軌空投版)
+# 程式碼：deep_rethink_mission.py (V1.3 時光刺客 - 雙軌空投版)
 # 職責：處理 mission_reverse 任務，具備 3-6-9 避震、雙重 Jitter 與長文自動打包機制。
+# 新增只傳送檔案、強化不崩潰流程、內文含標題
 # ---------------------------------------------------------
 import os, time, random, base64, requests, gc # 引入標準與隨機工具庫
 from datetime import datetime, timezone # 處理時區與時間
@@ -74,33 +75,32 @@ def call_gemini_with_fallback(s, r2_path, prompt):
 
 
 # =========================================================
-# 🎙️ 通訊發報站 (升級：1500字門檻，雙軌預覽與 TXT 空投機制)
+# 🎙️ 通訊發報站 (極簡防崩潰版：一律空投 TXT 檔案)
 # =========================================================
 def send_rethink_report(s, title, result):
-    """將翻譯結果寄送至 Telegram，超載則截斷預覽並空投全文檔案"""
+    """將所有翻譯結果無差別打包為純文字檔案，寄送至 Telegram"""
     safe_title = str(title).replace("*", "") 
     
     try:
-        # 🛡️ 視覺防線設定：小於等於 1500 字，全文舒適閱讀
-        if len(result) <= 1500:
-            report_msg = f"🔍 *【深度再思戰報】*\n📌 *主題：{safe_title}*\n\n{result}" 
-            url = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendMessage" 
-            payload = {"chat_id": s["TG_CHAT"], "text": report_msg, "parse_mode": "Markdown"} 
-            requests.post(url, json=payload, timeout=15) 
+        # 1. 呼叫 TG sendDocument API
+        url_doc = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendDocument"
         
-        # 🛡️ 超載防禦設定：大於 1500 字，發送 1000 字預覽 + 附件空投
-        else:
-            # 1. 發送 1000 字預覽文字
-            preview_text = result[:1000]
-            notify_msg = f"🔍 *【深度再思：巨量情報預覽】*\n📌 *主題：{safe_title}*\n\n{preview_text}...\n\n*(⚠️ 報告指揮官，本情報總字數高達 {len(result)} 字。為保持版面簡潔，全文已自動打包為 .txt 檔案，請參閱下方附件！)*"
-            url_msg = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendMessage"
-            requests.post(url_msg, json={"chat_id": s["TG_CHAT"], "text": notify_msg, "parse_mode": "Markdown"}, timeout=15)
-            
-            # 2. 呼叫 TG sendDocument 動態生成純文字檔並傳送
-            url_doc = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendDocument"
-            files = {'document': (f"深度戰報_{safe_title[:15]}.txt", result.encode('utf-8'))}
-            data = {'chat_id': s["TG_CHAT"]}
-            requests.post(url_doc, data=data, files=files, timeout=30)
+        # 2. 撰寫檔案附帶的簡短說明文字 (Caption，限制 1024 字元內)
+        caption_msg = f"🔍 *【深度再思：情報完工】*\n📌 *主題：{safe_title}*\n*(📝 報告指揮官，為確保通訊絕對穩定，情報已封裝為純文字檔。)*"
+        
+        # 3. 動態生成 txt 檔案並組合傳輸包
+        # 💡 防呆優化：強制在純文字檔的「第一行」寫入標題，防止日後閱讀忘記主題
+        file_content = f"📌 主題：{safe_title}\n\n====================\n\n{result}"
+        files = {'document': (f"深度戰報_{safe_title[:15]}.txt", file_content.encode('utf-8'))}
+        
+        data = {
+            'chat_id': s["TG_CHAT"],
+            'caption': caption_msg,
+            'parse_mode': 'Markdown'
+        }
+        
+        # 4. 單一 API 請求，一鍵發射 (timeout 設定 30 秒確保檔案傳輸穩定)
+        requests.post(url_doc, data=data, files=files, timeout=30)
             
     except Exception as e:
         print(f"⚠️ 發報失敗: {e}")
