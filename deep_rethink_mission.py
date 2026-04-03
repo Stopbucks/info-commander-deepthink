@@ -1,6 +1,6 @@
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V1.1 時光刺客 - 防彈裝甲版)
-# 職責：處理 mission_reverse 任務，具備 3-6-9 避震、雙重 Jitter 與過濾機制。
+# 程式碼：deep_rethink_mission.py (V1.2 時光刺客 - 雙軌空投版)
+# 職責：處理 mission_reverse 任務，具備 3-6-9 避震、雙重 Jitter 與長文自動打包機制。
 # ---------------------------------------------------------
 import os, time, random, base64, requests, gc # 引入標準與隨機工具庫
 from datetime import datetime, timezone # 處理時區與時間
