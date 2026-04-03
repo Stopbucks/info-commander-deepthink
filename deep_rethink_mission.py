@@ -1,5 +1,5 @@
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V1.8 時光刺客 - 終極觀測版)
+# 程式碼：deep_rethink_mission.py (V1.9 時光刺客 - 詢問模型防崩潰版)
 # 職責：處理 mission_reverse 任務，具備最高韌性梯隊與報告溯源功能。
 # 特色：終極防拒絕梯隊 (-001固定版)、報告內建模型名稱溯源。
 # ---------------------------------------------------------
@@ -26,15 +26,19 @@ def get_secrets():
 # =========================================================
 # 🧠 AI 火控中心 (最高韌性梯隊)
 # =========================================================
+# =========================================================
+# 🧠 AI 火控中心 (V1.9 絕對防禦版：無縫模型切換)
+# =========================================================
 def call_gemini_with_fallback(s, r2_path, prompt):
-    """執行 AI 請求，並在成功時回傳立功的模型名稱"""
+    """執行 AI 請求，遇到滿載則等待，遇到崩潰則秒切下一個模型"""
     models = [
-        "gemini-flash-lite-latest",  # 順位 1：配額最高，輕量快速
-        "gemini-flash-latest",       # 順位 2：當代主力，英聽極強
-        "gemini-2.5-flash",          # 順位 3：次世代主力備援
-        "gemini-3-flash-preview",    # 順位 4：尖端架構，預覽版備援
-        "gemini-2.0-flash-lite-001"  # 💥 順位 5：終極防禦。固定舊版節點，避開全球 latest 資源搶奪，最不易被拒絕。
+        "gemini-flash-lite-latest",  # 順位 1：最不易拒絕 (通訊兵)
+        "gemini-flash-latest",       # 順位 2：最強英聽 (主力部隊)
+        "gemini-2.5-flash",          # 順位 3：穩定備援
+        "gemini-3-flash-preview",    # 順位 4：尖端備援 (最易被限制)
+        "gemini-2.0-flash-lite-001"  # 💥 順位 5：終極防禦 (老將死守)
     ]
+    # 避震時間：0分, 2分, 4分 (單一模型最多糾纏 6 分鐘，防止 GHA 超時)
     wait_times = [0, 120, 240] 
     
     url = r2_path if r2_path.startswith("http") else f"{s['R2_URL']}/{r2_path.lstrip('/')}"
@@ -45,13 +49,15 @@ def call_gemini_with_fallback(s, r2_path, prompt):
         b64_audio = base64.b64encode(raw_bytes).decode('utf-8') 
         del raw_bytes; gc.collect() 
     except Exception as e:
-        return None, f"音檔下載失敗: {str(e)}", None # 💡 新增 None 作為模型名稱回傳
+        return None, f"音檔下載失敗: {str(e)}", None 
     
     for model in models:
         print(f"📡 [DEEP_RETHINK] 嘗試使用模型: {model}") 
+        
+        # 針對單一模型進行最多 3 次嘗試
         for wait in wait_times:
             if wait > 0:
-                print(f"⏳ [避震防禦] 原地等待 {wait//60} 分鐘...") 
+                print(f"⏳ [避震防禦] {model} 滿載，原地等待 {wait//60} 分鐘...") 
                 time.sleep(wait) 
             
             gemini_jitter = random.uniform(3.0, 10.0) 
@@ -65,17 +71,22 @@ def call_gemini_with_fallback(s, r2_path, prompt):
                 
                 if resp.status_code == 200:
                     res_json = resp.json() 
-                    # 💡 重大更新：成功時一併回傳模型名稱 (model)
                     return res_json['candidates'][0]['content']['parts'][0].get('text', ""), "SUCCESS", model 
-                elif resp.status_code == 429:
-                    print(f"⚠️ [能量耗盡] 429 流量管制中。") 
-                    continue 
-                else:
-                    return None, f"API 報錯: {resp.status_code}", None 
-            except Exception as e:
-                return None, f"請求崩潰: {str(e)}", None 
                 
-    return None, "FAILED_ALL_MODELS", None 
+                elif resp.status_code == 429:
+                    print(f"⚠️ [能量耗盡] {model} 觸發 429 流量管制。") 
+                    continue # 💡 遇到 429：繼續內層迴圈，進入下一個 wait 時間
+                
+                else:
+                    print(f"❌ [系統異常] {model} 報錯 {resp.status_code}，放棄此模型。") 
+                    break # 💡 重大修正：遇到 404/500 等死錯，跳出 wait 迴圈，立刻換下一個 model！
+            
+            except Exception as e:
+                print(f"💥 [通訊中斷] {model} 請求崩潰 ({str(e)})，放棄此模型。") 
+                break # 💡 重大修正：遇到 Timeout 斷線，跳出 wait 迴圈，立刻換下一個 model！
+                
+    # 五個模型全部陣亡才會走到這一步
+    return None, "FAILED_ALL_MODELS", None
 
 # =========================================================
 # 🎙️ 通訊發報站 (報告封裝空投)
