@@ -16,7 +16,7 @@
 #      - 將結果寫回 Supabase 並打包 .txt 檔案空投至 Telegram。
 # =========================================================
 
-name: GHA Deep Rethink (議題深度再思產線)
+name: GHA Deep Rethink (Agenda Deepthink workflow)
 
 on:
   # 1. 遠端調度：允許 Vercel 透過 API 隨時瞬間喚醒 (隨選即戰)
