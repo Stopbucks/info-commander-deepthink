@@ -1,5 +1,5 @@
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V2.0 - 提示詞轉移_詢問模型防崩潰版)
+# 程式碼：deep_rethink_mission.py (V2.1 - 提示詞轉移_詢問模型防崩潰版)
 # 職責：處理 mission_reverse 任務，具備最高韌性梯隊與報告溯源功能。
 # 特色：終極防拒絕梯隊 (-001固定版)、報告內建模型名稱溯源。
 # ---------------------------------------------------------
@@ -24,9 +24,6 @@ def get_secrets():
         "TG_CHAT": os.environ.get("TELEGRAM_CHAT_ID") 
     }
 
-# =========================================================
-# 🧠 AI 火控中心 (最高韌性梯隊)
-# =========================================================
 # =========================================================
 # 🧠 AI 火控中心 (V1.9 絕對防禦版：無縫模型切換)
 # =========================================================
@@ -89,25 +86,27 @@ def call_gemini_with_fallback(s, r2_path, prompt):
     # 五個模型全部陣亡才會走到這一步
     return None, "FAILED_ALL_MODELS", None
 
+
 # =========================================================
 # 🎙️ 通訊發報站 (報告封裝空投)
 # =========================================================
-def send_rethink_report(s, title, result, used_model):
-    """將翻譯結果與模型名稱封裝為 TXT 檔案"""
+def send_rethink_report(s, title, result, used_model, original_command):
+    """將翻譯結果、模型名稱與原始指令封裝為 TXT 檔案"""
     safe_title = str(title).replace("*", "") 
     try:
         url_doc = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendDocument"
-        caption_msg = f"🔍 *【深度再思：情報完工】*\n📌 *主題：{safe_title}*\n🤖 *模型：{used_model}*"
+        # 💡 增加顯示原始指令，讓 Telegram 介面一目了然
+        caption_msg = f"🔍 *【深度再思：情報完工】*\n📌 *主題：{safe_title}*\n🤖 *模型：{used_model}*\n⚙️ *指令：{original_command}*"
         
-        # 💡 重大更新：將模型名稱寫入純文字檔的第二行，確保日後溯源
-        file_content = f"📌 主題：{safe_title}\n🤖 負責模型：{used_model}\n\n====================\n\n{result}" 
+        # 檔案內文也一併記錄指令
+        file_content = f"📌 主題：{safe_title}\n🤖 負責模型：{used_model}\n⚙️ 原始指令：{original_command}\n\n====================\n\n{result}" 
         
         files = {'document': (f"深度戰報_{safe_title[:15]}.txt", file_content.encode('utf-8'))}
         data = {'chat_id': s["TG_CHAT"], 'caption': caption_msg, 'parse_mode': 'Markdown'}
         requests.post(url_doc, data=data, files=files, timeout=30) 
     except Exception as e:
         print(f"⚠️ 發報失敗: {e}")
-
+        
 # =========================================================
 # 🚀 任務總部署 (Mission Entry)
 # =========================================================
