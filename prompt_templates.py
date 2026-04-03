@@ -26,9 +26,10 @@
 #   ➤ /D : 【巨獸檔案降級專用】(系統自動觸發，分配 80% 算力於核心指示，20% 極限降噪)
 # =====================================================================
 
+
 def build_prompt(raw_command):
     """
-    智慧解析器：自動分離 /A, /B, /C 代碼與使用者的自訂指示，並套用對應版型。
+    智慧解析器：自動分離 /A, /B, /C, /D 代碼與使用者的自訂指示，並套用對應版型。
     """
     text = raw_command.strip()
     upper_text = text.upper()
@@ -39,9 +40,7 @@ def build_prompt(raw_command):
     # ==========================================
     # 💥 /A 模式：【全文翻譯 + 前面提及指示】
     # ==========================================
-    # 💥 /A 模式：【全文翻譯 + 前面提及指示】
-    # ==========================================
-    if "/A" in upper_text:
+    if "/A" in upper_text and not "/D" in upper_text:
         custom_instruction = text.replace("/A", "").replace("/a", "").strip()
         
         base_prompt = """請擔任專業情報分析師與首席翻譯官。請使用「純文字格式（僅透過換行區隔，絕對禁止使用星號或井字號）」執行以下兩項獨立任務：
@@ -55,13 +54,14 @@ def build_prompt(raw_command):
 - 雙軌制精簡分析：請以精簡扼要的篇幅，提供事實層（深入分析講者邏輯，忠於音檔）與視野層（調用知識庫補充宏觀背景）的總結。"""
 
         if custom_instruction:
-            return f"{base_prompt}\n\n此外，在「第二部分」的分析中，請務必針對以下核心指示進行深度總結：\n「{custom_instruction}」"
+            # 💡 修正：加上 {typo_guard}
+            return f"{base_prompt}\n\n此外，在「第二部分」的分析中，請務必針對以下核心指示進行深度總結：\n「{custom_instruction}」{typo_guard}"
         return f"{base_prompt}\n\n請在「第二部分」為我總結這篇情報的核心邏輯。"
 
     # ==========================================
     # 💥 /B 模式：【部分相關翻譯 + 前面提及指示】
     # ==========================================
-    elif "/B" in upper_text:
+    elif "/B" in upper_text and not "/D" in upper_text:
         custom_instruction = text.replace("/B", "").replace("/b", "").strip()
         
         base_prompt = """請擔任專業情報分析師。請使用「純文字格式（僅透過換行區隔，絕對禁止使用星號或井字號）」執行任務。
@@ -73,13 +73,14 @@ def build_prompt(raw_command):
 4. 深度分析：在翻譯段落結束後，請另起區塊，以精簡篇幅進行雙軌制（事實層/視野層）的專業短評。"""
 
         if custom_instruction:
-            return f"{base_prompt}\n\n🎯 鎖定主題與執行指示：\n「{custom_instruction}」"
+            # 💡 修正：加上 {typo_guard}
+            return f"{base_prompt}\n\n🎯 鎖定主題與執行指示：\n「{custom_instruction}」{typo_guard}"
         return f"{base_prompt}\n\n(由於未指定特定主題，請自動為我擷取音檔中最具爭議或關鍵的數據段落進行翻譯與評估。)"
 
     # ==========================================
     # 💥 /C 模式：【高保真精粹翻譯】(減壓卸載版)
     # ==========================================
-    elif "/C" in upper_text:
+    elif "/C" in upper_text and not "/D" in upper_text:
         custom_instruction = text.replace("/C", "").replace("/c", "").strip()
         
         base_prompt = """請擔任專業情報編譯官。我需要這段音檔的【高保真精粹英文還原】 (High-Fidelity Distilled Transcript)。請使用純文字格式（僅透過換行區隔，絕對禁止使用星號或井字號），並遵守以下正向編譯原則：
@@ -90,10 +91,11 @@ def build_prompt(raw_command):
 4. 結構重組：請將講者發散的思緒，重新組織成邏輯連貫、易於閱讀的英文段落。"""
 
         if custom_instruction:
-            return f"{base_prompt}\n\n此外，在編譯過程中，請特別放大並詳細轉錄與此指示相關的段落：\n「{custom_instruction}」"
+            # 💡 修正：加上 {typo_guard}
+            return f"{base_prompt}\n\n此外，在編譯過程中，請特別放大並詳細轉錄與此指示相關的段落：\n「{custom_instruction}」{typo_guard}"
         return base_prompt
 
-# ==========================================
+    # ==========================================
     # 🛡️ /D 模式：【巨獸防禦專用】(長官指定的大質量檔案專用模板)
     # ==========================================
     elif "/D" in upper_text:
@@ -116,9 +118,9 @@ def build_prompt(raw_command):
 在深度還原完畢後，請於文末提供精簡的視野層短評(容許使用知識庫，開頭標註短評，即可知道動用知識庫進行短評)。"""
 
         if custom_instruction:
-            return f"{base_prompt}\n\n🎯 鎖定鑽探目標與核心指示：\n「{custom_instruction}」\n\n請直接開始針對此目標進行深度鑽探。"
+            # 💡 修正：加上 {typo_guard}
+            return f"{base_prompt}\n\n🎯 鎖定鑽探目標與核心指示：\n「{custom_instruction}」{typo_guard}\n\n請直接開始針對此目標進行深度鑽探。"
         return f"{base_prompt}\n\n(長官未提供特定指示，請自動偵測本節目最具深度與爭議的核心主題，進行極限精華剖析。)"
-
 
     # ==========================================
     # 🛡️ Fallback 模式：若未輸入任何代碼，原句奉還
