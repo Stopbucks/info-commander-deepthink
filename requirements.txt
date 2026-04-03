@@ -1,2 +1,6 @@
-supabase==2.3.4
+# 這是info-commander-deepthink requirements.txt
+# 任務：讀取執行supabase 的 mission_reverse 要求事項
+
+supabase==2.12.0
 requests==2.31.0
+httpx==0.27.2
