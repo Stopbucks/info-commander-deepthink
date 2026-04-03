@@ -1,9 +1,11 @@
+
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V2.1 - 提示詞轉移_詢問模型防崩潰版)
+# 程式碼：deep_rethink_mission.py (V2.4 - 補救搜索雷達版)
 # 職責：處理 mission_reverse 任務，具備最高韌性梯隊與報告溯源功能。
-# 特色：終極防拒絕梯隊 (-001固定版)、報告內建模型名稱溯源。
+# 特色：終極防拒絕梯隊、大質量防禦、Emoji 淨化補救與 TG 異常通報。
 # ---------------------------------------------------------
 import os, time, random, base64, requests, gc # 引入核心工具
+import re # 💡 新增：用於正規表達式處理 Emoji
 from datetime import datetime, timezone # 處理時間戳
 from supabase import create_client # 資料庫連線工具
 from prompt_templates import build_prompt
@@ -23,6 +25,22 @@ def get_secrets():
         "TG_TOKEN": os.environ.get("TELEGRAM_BOT_TOKEN"), 
         "TG_CHAT": os.environ.get("TELEGRAM_CHAT_ID") 
     }
+
+# =========================================================
+# 🛠️ 輔助工具 (V2.4 新增)
+# =========================================================
+def clean_title_for_search(title):
+    """移除 Emoji 與特殊字元，僅保留文字、數字與基本標點"""
+    return re.sub(r'[^\w\s,.?\'"-]', '', title).strip()
+
+def send_tg_notice(s, message):
+    """發送純文字通知到 Telegram (用於異常告警)"""
+    try:
+        url = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendMessage"
+        data = {"chat_id": s["TG_CHAT"], "text": message, "parse_mode": "Markdown"}
+        requests.post(url, data=data, timeout=10)
+    except: pass
+
 # =========================================================
 # 🧠 AI 火控中心 (V1.9 絕對防禦版：無縫模型切換)
 # =========================================================
@@ -62,7 +80,6 @@ def call_gemini_with_fallback(s, r2_path, prompt):
             try:
                 g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={s['GEMINI_KEY']}" 
                 payload = {"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/ogg", "data": b64_audio}}]}]} 
-                # 💡 重大修正：將 timeout 調高至 900 秒 (15分鐘)，確保超長音檔不會斷線
                 resp = requests.post(g_url, json=payload, timeout=900) 
                 
                 if resp.status_code == 200:
@@ -82,6 +99,7 @@ def call_gemini_with_fallback(s, r2_path, prompt):
                 break 
                 
     return None, "FAILED_ALL_MODELS", None
+
 # =========================================================
 # 🎙️ 通訊發報站 (報告封裝空投)
 # =========================================================
@@ -91,12 +109,10 @@ def send_rethink_report(s, title, result, used_model, original_command, listen_u
     try:
         url_doc = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendDocument"
         
-        # 💡 Telegram 介面顯示：加入音檔聆聽連結與降級警告
         caption_msg = f"🔍 *【深度再思：情報完工】*\n📌 *主題：{safe_title}*\n🤖 *模型：{used_model}*\n⚙️ *指令：{original_command}*\n🎧 *音檔：* [點擊聽證]({listen_url})"
         if is_downgraded:
             caption_msg += "\n⚠️ *狀態：巨獸檔案觸發防禦，已自動轉為降級鑽探模式 (/D)*"
         
-        # 檔案內文也一併記錄指令與聆聽網址
         file_content = f"📌 主題：{safe_title}\n🤖 負責模型：{used_model}\n⚙️ 原始指令：{original_command}\n🎧 聆聽連結：{listen_url}\n"
         
         if is_downgraded:
@@ -116,7 +132,7 @@ def send_rethink_report(s, title, result, used_model, original_command, listen_u
 def run_rethink_mission():
     """主程序：掃描 pending 任務並執行 AI 轉譯"""
     start_time = time.time() 
-    print(f"🚀 [TIME_ASSASSIN] V2.3 產線啟動，大質量防禦與降級路由已掛載...") 
+    print(f"🚀 [TIME_ASSASSIN] V2.4 產線啟動，補救雷達與降級路由已掛載...") 
     
     start_jitter = random.uniform(2.0, 6.0) 
     print(f"🎲 [DB Jitter] 啟動冷卻 {start_jitter:.1f} 秒...")
@@ -125,7 +141,8 @@ def run_rethink_mission():
     sb = get_sb(); s = get_secrets() 
     
     try:
-        res = sb.table("mission_reverse").select("*").in_("status", ["pending", "failed_rate_limit"]).limit(3).execute() 
+        # 💡 重大修正：允許抓取 not_found 的任務進行補救
+        res = sb.table("mission_reverse").select("*").in_("status", ["pending", "failed_rate_limit", "not_found"]).limit(3).execute() 
         tasks = res.data or []
         
         if not tasks:
@@ -136,22 +153,32 @@ def run_rethink_mission():
 
             t_id = task['id']; q_id = task.get('task_id')
             raw_command = task.get('target_prompt', '').strip() 
-            original_user_command = raw_command # 紀錄原始指令供回報使用
+            original_user_command = raw_command 
             
-            if not q_id:
-                sb.table("mission_reverse").update({"status": "not_found", "error_log": "未提供任務 ID"}).eq("id", t_id).execute()
-                continue
+            # ==========================================
+            # 🛡️ 補救搜索雷達 (處理 Emoji 導致的 not_found)
+            # ==========================================
+            if task.get('status') == "not_found" or not q_id:
+                print(f"🕵️ 偵測到 {t_id[:8]} 狀態異常，嘗試補救...")
+                
+                # 若 Vercel 失敗，通常會在 error_log 或某處留有原始標題。
+                # 這裡假設您的 Vercel 在失敗時，會把使用者觸發的 raw_command 留著。
+                # 但 Vercel 當時找不到 q_id，我們 GHA 只能回報長官「任務失敗」。
+                if not q_id:
+                    print("❌ 無法取得任務 ID，發送 TG 警告。")
+                    send_tg_notice(s, f"⚠️ *系統告警：情報溯源失敗*\n長官，您剛才下達的指令 (`{original_user_command}`) 無法在資料庫中找到對應的母檔案。\n\n*可能原因*：該情報標題含有 Emoji 等特殊符號，導致系統比對失敗。此任務已終止。")
+                    sb.table("mission_reverse").update({"status": "rejected", "error_log": "無法補救的標題失聯 (q_id 缺失)"}).eq("id", t_id).execute()
+                    continue
 
+            # 如果 q_id 存在，繼續正常流程
             q_res = sb.table("mission_queue").select("episode_title, r2_url, audio_size_mb").eq("id", q_id).single().execute()
             q_data = q_res.data or {}
             r2_path = str(q_data.get('r2_url') or '')
             audio_size = q_data.get('audio_size_mb') or 0
             title = q_data.get('episode_title', '未知主題') 
             
-            # 💡 生成 R2 聆聽連結
             listen_url = r2_path if r2_path.startswith("http") else f"{s['R2_URL']}/{r2_path.lstrip('/')}"
 
-            # 💡 將音檔限制放寬至 600MB
             if not r2_path.lower().endswith('.opus') or audio_size > 600:
                 sb.table("mission_reverse").update({"status": "rejected", "error_log": f"規格不符: {audio_size}MB, {r2_path}"}).eq("id", t_id).execute()
                 continue
@@ -159,36 +186,28 @@ def run_rethink_mission():
             sb.table("mission_reverse").update({"status": "processing"}).eq("id", t_id).execute() 
             
             # ==========================================
-            # 🛡️ 大質量音檔防禦與智能路由 (Oversize Failsafe)
+            # 🛡️ 大質量音檔防禦與智能路由
             # ==========================================
             is_downgraded = False
             final_command = raw_command
             
-            # 雷達警戒：原始檔案超過 100MB (約1.5小時以上)
             if audio_size > 100:
                 print(f"⚠️ [巨獸防禦] 偵測到大型音檔 ({audio_size}MB)，強制切換至 /D 降級鑽探模式...")
                 is_downgraded = True
-                
-                # 抽出長官原本輸入的所有文字 (剔除舊代碼 /A /B /C /D)
                 clean_req = raw_command.upper().replace("/A", "").replace("/B", "").replace("/C", "").replace("/D", "").strip()
-                
-                # 強制套用 /D 裝甲
                 final_command = f"/D {clean_req}"
 
-            # ⚡ 將最終決定好的指令交給解析引擎
             actual_prompt = build_prompt(final_command)
             
-            # 💡 針對巨型檔案注入前置導航脈絡
+            # 💡 針對巨型檔案注入前置導航脈絡 (配合 V3.4 解除字數封印)
             if audio_size > 100:
-                context_injection = f"\n\n[⚠️ 系統導航脈絡]\n此檔案原始大小達 {audio_size}MB。請跳過寒暄與無意義段落，將輸出算力高度集中於回覆指示，避免流水帳輸出以防截斷。"
+                context_injection = f"\n\n[⚠️ 系統導航脈絡]\n此檔案原始大小達 {audio_size}MB。請跳過無關段落，將輸出算力 100% 集中於回覆長官的具體指示。在該指示範圍內，請給出極度詳盡的長篇幅翻譯與還原，無需擔憂長度，請盡情展開您的輸出額度。"
                 actual_prompt += context_injection
             
-            # ⚡ 呼叫 Gemini
             final_text, status_code, used_model = call_gemini_with_fallback(s, r2_path, actual_prompt) 
             
             if status_code == "SUCCESS":
                 sb.table("mission_reverse").update({"status": "completed", "result_text": final_text, "email_sent": True}).eq("id", t_id).execute() 
-                # ⚡ 傳遞新增的參數：聆聽連結與降級狀態
                 send_rethink_report(s, title, final_text, used_model, original_user_command, listen_url, is_downgraded) 
                 print(f"🎉 任務 {t_id[:8]} 完成！負責模型：{used_model}") 
             else:
