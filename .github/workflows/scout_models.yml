@@ -1,0 +1,19 @@
+name: 📡 model list scout
+
+on:
+  workflow_dispatch: # 允許您在 Actions 頁面手動點擊按鈕觸發
+
+jobs:
+  check_available_models:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: 安裝 SDK
+        run: pip install google-generativeai
+      - name: 執行偵查
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python list_models.py
