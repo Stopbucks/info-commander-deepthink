@@ -1,12 +1,12 @@
-
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V2.5 - 大檔檢查、檔案搜索補強版)
+# 程式碼：deep_rethink_mission.py (V2.6 - 終極雙劍流、過境壓縮與脈絡對齊版)
 # 職責：處理 mission_reverse 任務，具備最高韌性梯隊與報告溯源功能。
-# 特色：終極防拒絕梯隊、大質量防禦、Emoji 淨化補救與 TG 異常通報。
-# 修改：新增物裡層由程式碼檢查大檔，採取100MB為限，相應措施告知。
+# 特色：本機極速 Opus 壓縮、大質量防禦、Emoji 淨化補救與 TG 異常通報。
+# 修改：導入本機 ffmpeg 壓縮並針對人聲極致優化，修正長文本認知提示詞。
 # ---------------------------------------------------------
 import os, time, random, base64, requests, gc # 引入核心工具
-import re # 💡 新增：用於正規表達式處理 Emoji
+import re # 用於正規表達式處理 Emoji
+import subprocess, tempfile # 💡 新增：用於本機執行 FFmpeg 過境壓縮
 from datetime import datetime, timezone # 處理時間戳
 from supabase import create_client # 資料庫連線工具
 from prompt_templates import build_prompt
@@ -28,7 +28,7 @@ def get_secrets():
     }
 
 # =========================================================
-# 🛠️ 輔助工具 (V2.4 新增)
+# 🛠️ 輔助工具
 # =========================================================
 def clean_title_for_search(title):
     """移除 Emoji 與特殊字元，僅保留文字、數字與基本標點"""
@@ -43,16 +43,16 @@ def send_tg_notice(s, message):
     except: pass
 
 # =========================================================
-# 🧠 AI 火控中心 (V1.9 絕對防禦版：無縫模型切換)
+# 🧠 AI 火控中心 (V2.0 過境壓縮防禦版)
 # =========================================================
 def call_gemini_with_fallback(s, r2_path, prompt):
-    """執行 AI 請求，遇到滿載則等待，遇到崩潰則秒切下一個模型"""
+    """執行 AI 請求，遇到非 Opus 檔案則自動執行本機極速壓縮"""
     models = [
-        "gemini-flash-lite-latest",  # 順位 1：最不易拒絕 (通訊兵)
-        "gemini-flash-latest",       # 順位 2：最強英聽 (主力部隊)
-        "gemini-2.5-flash",          # 順位 3：穩定備援
-        "gemini-3-flash-preview",    # 順位 4：尖端備援 (最易被限制)
-        "gemini-2.0-flash-lite-001"  # 💥 順位 5：終極防禦 (老將死守)
+        "gemini-flash-lite-latest",  
+        "gemini-flash-latest",       
+        "gemini-2.5-flash",          
+        "gemini-3-flash-preview",    
+        "gemini-2.0-flash-lite-001"  
     ]
     wait_times = [0, 120, 240] 
     
@@ -61,8 +61,38 @@ def call_gemini_with_fallback(s, r2_path, prompt):
     try:
         print(f"📡 [目標鎖定] 準備下載音檔: {url}") 
         raw_bytes = requests.get(url, timeout=120).content 
-        b64_audio = base64.b64encode(raw_bytes).decode('utf-8') 
-        del raw_bytes; gc.collect() 
+        
+        # 💡 核心防禦：過境壓縮機制 (專為純英語人聲優化)
+        if not url.lower().endswith('.opus'):
+            print(f"🗜️ [過境壓縮] 啟動 GHA 本機 FFmpeg 人聲極致降噪壓縮...")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".raw") as tmp_raw:
+                tmp_raw.write(raw_bytes)
+                tmp_raw_path = tmp_raw.name
+            
+            tmp_opus_path = tmp_raw_path + ".opus"
+            
+            try:
+                # 🎙️ 殺手級參數：-application voip 專注語音清晰度
+                subprocess.run(['ffmpeg', '-y', '-i', tmp_raw_path, 
+                                '-ar', '16000', '-ac', '1', 
+                                '-c:a', 'libopus', '-b:a', '24k', '-application', 'voip', 
+                                tmp_opus_path], 
+                               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                with open(tmp_opus_path, 'rb') as f:
+                    b64_audio = base64.b64encode(f.read()).decode('utf-8')
+                print("✅ [過境壓縮] 人聲提煉完畢！準備發送至 AI。")
+            except Exception as e:
+                print(f"❌ 本機壓縮失敗: {e}")
+                return None, f"本機壓縮失敗: {str(e)}", None
+            finally:
+                if os.path.exists(tmp_raw_path): os.remove(tmp_raw_path)
+                if os.path.exists(tmp_opus_path): os.remove(tmp_opus_path)
+                del raw_bytes; gc.collect()
+        else:
+            b64_audio = base64.b64encode(raw_bytes).decode('utf-8') 
+            del raw_bytes; gc.collect() 
+
     except Exception as e:
         return None, f"音檔下載失敗: {str(e)}", None 
     
@@ -112,12 +142,12 @@ def send_rethink_report(s, title, result, used_model, original_command, listen_u
         
         caption_msg = f"🔍 *【深度再思：情報完工】*\n📌 *主題：{safe_title}*\n🤖 *模型：{used_model}*\n⚙️ *指令：{original_command}*\n🎧 *音檔：* [點擊聽證]({listen_url})"
         if is_downgraded:
-            caption_msg += "\n⚠️ *狀態：巨獸檔案觸發防禦，已自動轉為降級鑽探模式 (/D)*"
+            caption_msg += "\n⚠️ *狀態：觸發巨集認知防禦 (因應超長時數節目)*"
         
         file_content = f"📌 主題：{safe_title}\n🤖 負責模型：{used_model}\n⚙️ 原始指令：{original_command}\n🎧 聆聽連結：{listen_url}\n"
         
         if is_downgraded:
-            file_content += "⚠️ 系統防禦紀錄：因原始音檔過長(超過系統安全輸出上限)，已自動切換至 /D (降級鑽探) 模式，以最高算力集中於您的核心指示。\n"
+            file_content += "⚠️ 系統防禦紀錄：系統偵測此音檔長度極長。已自動啟動巨集認知防禦，指示 AI 放棄瑣碎雜訊，將最高算力集中於核心指示。\n"
             
         file_content += f"\n====================\n\n{result}" 
         
@@ -126,13 +156,14 @@ def send_rethink_report(s, title, result, used_model, original_command, listen_u
         requests.post(url_doc, data=data, files=files, timeout=30) 
     except Exception as e:
         print(f"⚠️ 發報失敗: {e}")
+
 # =========================================================
 # 🚀 任務總部署 (Mission Entry)
 # =========================================================
 def run_rethink_mission():
     """主程序：掃描 pending 任務並執行 AI 轉譯"""
     start_time = time.time() 
-    print(f"🚀 [TIME_ASSASSIN] V2.4 產線啟動，補救雷達與雙層檢視已掛載...") 
+    print(f"🚀 [TIME_ASSASSIN] V2.6 產線啟動，補救雷達與動態壓縮已掛載...") 
     
     start_jitter = random.uniform(2.0, 6.0) 
     print(f"🎲 [DB Jitter] 啟動冷卻 {start_jitter:.1f} 秒...")
@@ -141,7 +172,6 @@ def run_rethink_mission():
     sb = get_sb(); s = get_secrets() 
     
     try:
-        # 💡 重大修正：允許抓取 not_found 的任務進行補救
         res = sb.table("mission_reverse").select("*").in_("status", ["pending", "failed_rate_limit", "not_found"]).limit(3).execute() 
         tasks = res.data or []
         
@@ -160,16 +190,12 @@ def run_rethink_mission():
             # ==========================================
             if task.get('status') == "not_found" or not q_id:
                 print(f"🕵️ 偵測到 {t_id[:8]} 狀態異常，嘗試補救...")
-                
-                # 若 Vercel 失敗，通常會在 error_log 或某處留有原始標題。
-                # 但 Vercel 當時找不到 q_id，我們 GHA 只能回報長官「任務失敗」。
                 if not q_id:
                     print("❌ 無法取得任務 ID，發送 TG 警告。")
-                    send_tg_notice(s, f"⚠️ *系統告警：情報溯源失敗*\n長官，您剛才下達的指令 (`{original_user_command}`) 無法在資料庫中找到對應的母檔案。\n\n*可能原因*：該情報標題含有 Emoji 等特殊符號，導致系統比對失敗。此任務已終止。")
-                    sb.table("mission_reverse").update({"status": "rejected", "error_log": "無法補救的標題失聯 (q_id 缺失)"}).eq("id", t_id).execute()
+                    send_tg_notice(s, f"⚠️ *系統告警：情報溯源失敗*\n長官，指令 (`{original_user_command}`) 無法在資料庫中找到對應的母檔案。\n*可能原因*：標題含有特殊符號，導致比對失敗。任務已終止。")
+                    sb.table("mission_reverse").update({"status": "rejected", "error_log": "標題失聯 (q_id 缺失)"}).eq("id", t_id).execute()
                     continue
 
-            # 如果 q_id 存在，繼續正常流程
             q_res = sb.table("mission_queue").select("episode_title, r2_url, audio_size_mb").eq("id", q_id).single().execute()
             q_data = q_res.data or {}
             r2_path = str(q_data.get('r2_url') or '')
@@ -178,31 +204,33 @@ def run_rethink_mission():
             
             listen_url = r2_path if r2_path.startswith("http") else f"{s['R2_URL']}/{r2_path.lstrip('/')}"
 
-            if not r2_path.lower().endswith('.opus') or audio_size > 600:
-                sb.table("mission_reverse").update({"status": "rejected", "error_log": f"規格不符: {audio_size}MB, {r2_path}"}).eq("id", t_id).execute()
+            # 💡 關鍵放行：允許 MP3 與 M4A 進入產線，交由火控中心本機壓縮
+            valid_exts = ('.opus', '.mp3', '.m4a')
+            if not r2_path.lower().endswith(valid_exts) or audio_size > 600:
+                reject_msg = f"規格不符: 檔案過大或類型異常 ({audio_size}MB, {r2_path})"
+                print(f"🚫 [系統攔截] 任務 {t_id[:8]} 被拒絕 - {reject_msg}")
+                sb.table("mission_reverse").update({"status": "rejected", "error_log": reject_msg}).eq("id", t_id).execute()
                 continue
 
             sb.table("mission_reverse").update({"status": "processing"}).eq("id", t_id).execute() 
             
             # ==========================================
-            # 🛡️ 雙層檢視：大質量音檔動態脈絡注入 (對接 V4.0 雙劍流)
+            # 🛡️ 雙層檢視：超長時數音檔動態脈絡注入 (對接 V4.0 雙劍流)
             # ==========================================
             is_downgraded = False
             
-            # 💡 第一步：尊重長官意志，直接取得雙劍流模板 (巨集 /A 或 狙擊 /B)
             actual_prompt = build_prompt(raw_command)
             
-            # 💡 第二步：物理元數據檢查！如果超過 100MB，啟動巨獸防禦脈絡注入
-            if audio_size > 100:
-                print(f"⚠️ [巨獸防禦] 偵測到大型音檔 ({audio_size}MB)，動態注入降噪授權...")
-                is_downgraded = True # 觸發發報站的警告燈號
+            # 💡 邏輯對齊：用檔案大小推測節目長度，並調整給 AI 的認知脈絡
+            if audio_size > 75:
+                print(f"⚠️ [長文本防禦] 偵測到馬拉松級節目 ({audio_size}MB)，動態注入認知授權...")
+                is_downgraded = True 
                 
-                # 將「免責聲明與降噪授權」動態黏在提示詞最尾端
-                giant_file_injection = "\n\n[⚠️ 系統前置導航：巨獸檔案防禦機制]\n系統偵測此音檔為超長篇巨獸檔案。您現在的任務是「第二波深度逆向工程」。無須擔心遺漏全局的瑣碎細節（因第一線部隊已完成全局輪廓掃描）。請將 100% 的算力集中於長官指示的戰略核心與結構化要求，針對無關段落請無情壓縮以防輸出截斷！"
+                # 重新設計的提示詞，強調「內容長度」而非物理大小
+                giant_file_injection = "\n\n[⚠️ 系統前置導航：超長文本認知防禦]\n系統偵測此音檔內容極長、資訊密度極高。您現在的任務是「第二波深度逆向工程」。無須擔心遺漏全局的瑣碎細節（因第一線部隊已完成基礎掃描）。請將 100% 的算力高度集中於長官指示的戰略核心與結構化要求，針對無關段落請堅決略過或無情壓縮，以防輸出截斷！"
                 
                 actual_prompt += giant_file_injection
             
-            # ⚡ 呼叫 Gemini
             final_text, status_code, used_model = call_gemini_with_fallback(s, r2_path, actual_prompt) 
             
             if status_code == "SUCCESS":
