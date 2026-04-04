@@ -5,11 +5,11 @@
 # ---------------------------------------------------------
 from datetime import datetime, timezone, timedelta
 
-def run_janitor(sb, days_to_keep=30):
+def run_janitor(sb, days_to_keep=60):
     """
     自動清理過期的已結案任務。
     :param sb: Supabase 客戶端實例
-    :param days_to_keep: 保留天數，預設 30 天 (可於主程式呼叫時修改)
+    :param days_to_keep: 保留天數，預設 60 天 (可於主程式呼叫時修改)
     """
     try:
         # 計算過期臨界點的 ISO 格式時間戳記
