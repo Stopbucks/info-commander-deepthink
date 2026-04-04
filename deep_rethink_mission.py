@@ -1,8 +1,9 @@
 
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V2.4 - 補救搜索雷達版)
+# 程式碼：deep_rethink_mission.py (V2.5 - 大檔檢查、檔案搜索補強版)
 # 職責：處理 mission_reverse 任務，具備最高韌性梯隊與報告溯源功能。
 # 特色：終極防拒絕梯隊、大質量防禦、Emoji 淨化補救與 TG 異常通報。
+# 修改：新增物裡層由程式碼檢查大檔，採取100MB為限，相應措施告知。
 # ---------------------------------------------------------
 import os, time, random, base64, requests, gc # 引入核心工具
 import re # 💡 新增：用於正規表達式處理 Emoji
@@ -125,14 +126,13 @@ def send_rethink_report(s, title, result, used_model, original_command, listen_u
         requests.post(url_doc, data=data, files=files, timeout=30) 
     except Exception as e:
         print(f"⚠️ 發報失敗: {e}")
-        
 # =========================================================
 # 🚀 任務總部署 (Mission Entry)
 # =========================================================
 def run_rethink_mission():
     """主程序：掃描 pending 任務並執行 AI 轉譯"""
     start_time = time.time() 
-    print(f"🚀 [TIME_ASSASSIN] V2.4 產線啟動，補救雷達與降級路由已掛載...") 
+    print(f"🚀 [TIME_ASSASSIN] V2.4 產線啟動，補救雷達與雙層檢視已掛載...") 
     
     start_jitter = random.uniform(2.0, 6.0) 
     print(f"🎲 [DB Jitter] 啟動冷卻 {start_jitter:.1f} 秒...")
@@ -162,7 +162,6 @@ def run_rethink_mission():
                 print(f"🕵️ 偵測到 {t_id[:8]} 狀態異常，嘗試補救...")
                 
                 # 若 Vercel 失敗，通常會在 error_log 或某處留有原始標題。
-                # 這裡假設您的 Vercel 在失敗時，會把使用者觸發的 raw_command 留著。
                 # 但 Vercel 當時找不到 q_id，我們 GHA 只能回報長官「任務失敗」。
                 if not q_id:
                     print("❌ 無法取得任務 ID，發送 TG 警告。")
@@ -186,24 +185,24 @@ def run_rethink_mission():
             sb.table("mission_reverse").update({"status": "processing"}).eq("id", t_id).execute() 
             
             # ==========================================
-            # 🛡️ 大質量音檔防禦與智能路由
+            # 🛡️ 雙層檢視：大質量音檔動態脈絡注入 (對接 V4.0 雙劍流)
             # ==========================================
             is_downgraded = False
-            final_command = raw_command
             
+            # 💡 第一步：尊重長官意志，直接取得雙劍流模板 (巨集 /A 或 狙擊 /B)
+            actual_prompt = build_prompt(raw_command)
+            
+            # 💡 第二步：物理元數據檢查！如果超過 100MB，啟動巨獸防禦脈絡注入
             if audio_size > 100:
-                print(f"⚠️ [巨獸防禦] 偵測到大型音檔 ({audio_size}MB)，強制切換至 /D 降級鑽探模式...")
-                is_downgraded = True
-                clean_req = raw_command.upper().replace("/A", "").replace("/B", "").replace("/C", "").replace("/D", "").strip()
-                final_command = f"/D {clean_req}"
-
-            actual_prompt = build_prompt(final_command)
+                print(f"⚠️ [巨獸防禦] 偵測到大型音檔 ({audio_size}MB)，動態注入降噪授權...")
+                is_downgraded = True # 觸發發報站的警告燈號
+                
+                # 將「免責聲明與降噪授權」動態黏在提示詞最尾端
+                giant_file_injection = "\n\n[⚠️ 系統前置導航：巨獸檔案防禦機制]\n系統偵測此音檔為超長篇巨獸檔案。您現在的任務是「第二波深度逆向工程」。無須擔心遺漏全局的瑣碎細節（因第一線部隊已完成全局輪廓掃描）。請將 100% 的算力集中於長官指示的戰略核心與結構化要求，針對無關段落請無情壓縮以防輸出截斷！"
+                
+                actual_prompt += giant_file_injection
             
-            # 💡 針對巨型檔案注入前置導航脈絡 (配合 V3.4 解除字數封印)
-            if audio_size > 100:
-                context_injection = f"\n\n[⚠️ 系統導航脈絡]\n此檔案原始大小達 {audio_size}MB。請跳過無關段落，將輸出算力 100% 集中於回覆長官的具體指示。在該指示範圍內，請給出極度詳盡的長篇幅翻譯與還原，無需擔憂長度，請盡情展開您的輸出額度。"
-                actual_prompt += context_injection
-            
+            # ⚡ 呼叫 Gemini
             final_text, status_code, used_model = call_gemini_with_fallback(s, r2_path, actual_prompt) 
             
             if status_code == "SUCCESS":
