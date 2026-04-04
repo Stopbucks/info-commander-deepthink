@@ -134,7 +134,7 @@ def call_gemini_with_fallback(s, r2_path, prompt):
 
 
 # =========================================================
-# 🎙️ 通訊發報站 (報告封裝空投)
+# 🎙️ 通訊發報站 (報告封裝空投 - 終極除錯防禦版)
 # =========================================================
 def send_rethink_report(s, title, result, used_model, original_command, listen_url, is_downgraded=False):
     """將翻譯結果、模型名稱、原始指令與聆聽連結封裝為 TXT 檔案"""
@@ -156,23 +156,33 @@ def send_rethink_report(s, title, result, used_model, original_command, listen_u
         files = {'document': (f"深度戰報_{safe_title[:15]}.txt", file_content.encode('utf-8'))}
         data = {'chat_id': s["TG_CHAT"], 'caption': caption_msg, 'parse_mode': 'Markdown'}
         
-        # 💡 增強防禦：捕獲 Telegram 回傳的真實狀態
+        print(f"📨 [通訊站] 準備空投至 TG Chat ID: {s['TG_CHAT']}")
+        
+        # 執行第一次發送 (帶 Markdown)
         resp = requests.post(url_doc, data=data, files=files, timeout=30) 
         
-        if resp.status_code != 200:
-            print(f"⚠️ TG 報戰發布失敗 (可能為 ID 錯誤或 Markdown 衝突): HTTP {resp.status_code} - {resp.text}")
-            print("🔄 嘗試拔除 Markdown 格式降級重發...")
-            data['parse_mode'] = None # 拔除 Markdown 重新發送
+        # 💡 除錯核心：攔截 Telegram 的真實臉色
+        if resp.status_code == 200:
+            print("✅ [通訊站] TG 戰報發送成功！")
+        else:
+            # 🚨 這裡會印出 Telegram 為什麼不收的真正原因！
+            print(f"⚠️ [通訊站] TG 拒絕接收 (HTTP {resp.status_code})！詳細錯誤：{resp.text}")
             
-            resp_fallback = requests.post(url_doc, data=data, files=files, timeout=30)
-            if resp_fallback.status_code != 200:
-                print(f"❌ TG 終極發送失敗: {resp_fallback.text}")
+            # 啟動降級重試：拔除 Markdown 解析，以純文字硬發
+            print("🔄 [通訊站] 啟動降級防禦：拔除 Markdown 格式重試中...")
+            data['parse_mode'] = None 
+            
+            # 重新封裝檔案 (避免檔案指標跑到尾端導致空檔案)
+            files_fallback = {'document': (f"深度戰報_{safe_title[:15]}.txt", file_content.encode('utf-8'))}
+            resp_fallback = requests.post(url_doc, data=data, files=files_fallback, timeout=30)
+            
+            if resp_fallback.status_code == 200:
+                print("✅ [通訊站] 降級純文字發送成功！")
             else:
-                print("✅ 降級純文字發送成功！")
-
+                print(f"❌ [通訊站] 終極發送失敗！詳細錯誤：{resp_fallback.text}")
+                
     except Exception as e:
-        print(f"⚠️ 發報核心異常: {e}")
-
+        print(f"💥 [通訊站] 程式執行崩潰: {e}")
 # =========================================================
 # 🚀 任務總部署 (Mission Entry)
 # =========================================================
