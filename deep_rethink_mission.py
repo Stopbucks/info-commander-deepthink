@@ -245,7 +245,7 @@ def run_rethink_mission():
             gc.collect() 
 
         
-        # 💡 新增：所有轉譯任務處理完畢後，派清道夫打掃戰場 (預設 30 天)
+        # 💡 新增：所有轉譯任務處理完畢後，派清道夫打掃戰場 (預設 60 天)
         # 若未來想改成 15 天，只需改成 run_janitor(sb, days_to_keep=15) 即可，主程式依舊乾淨！
         run_janitor(sb)
 
