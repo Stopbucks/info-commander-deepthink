@@ -132,6 +132,7 @@ def call_gemini_with_fallback(s, r2_path, prompt):
                 
     return None, "FAILED_ALL_MODELS", None
 
+
 # =========================================================
 # 🎙️ 通訊發報站 (報告封裝空投)
 # =========================================================
@@ -154,9 +155,23 @@ def send_rethink_report(s, title, result, used_model, original_command, listen_u
         
         files = {'document': (f"深度戰報_{safe_title[:15]}.txt", file_content.encode('utf-8'))}
         data = {'chat_id': s["TG_CHAT"], 'caption': caption_msg, 'parse_mode': 'Markdown'}
-        requests.post(url_doc, data=data, files=files, timeout=30) 
+        
+        # 💡 增強防禦：捕獲 Telegram 回傳的真實狀態
+        resp = requests.post(url_doc, data=data, files=files, timeout=30) 
+        
+        if resp.status_code != 200:
+            print(f"⚠️ TG 報戰發布失敗 (可能為 ID 錯誤或 Markdown 衝突): HTTP {resp.status_code} - {resp.text}")
+            print("🔄 嘗試拔除 Markdown 格式降級重發...")
+            data['parse_mode'] = None # 拔除 Markdown 重新發送
+            
+            resp_fallback = requests.post(url_doc, data=data, files=files, timeout=30)
+            if resp_fallback.status_code != 200:
+                print(f"❌ TG 終極發送失敗: {resp_fallback.text}")
+            else:
+                print("✅ 降級純文字發送成功！")
+
     except Exception as e:
-        print(f"⚠️ 發報失敗: {e}")
+        print(f"⚠️ 發報核心異常: {e}")
 
 # =========================================================
 # 🚀 任務總部署 (Mission Entry)
