@@ -1,16 +1,18 @@
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V2.6 - 終極雙劍流、過境壓縮與脈絡對齊版)
+# 程式碼：deep_rethink_mission.py (V2.7 - M&M逆向分析、過境壓縮與脈絡對齊版)
 # 職責：處理 mission_reverse 任務，具備最高韌性梯隊與報告溯源功能。
 # 特色：本機極速 Opus 壓縮、大質量防禦、Emoji 淨化補救與 TG 異常通報。
 # 修改：導入本機 ffmpeg 壓縮並針對人聲極致優化，修正長文本認知提示詞。
 # ---------------------------------------------------------
+# 修改：導入透明容量標籤，TG 戰報將明確標示音檔來源大小，防禦流量盲區。
+# ---------------------------------------------------------
 import os, time, random, base64, requests, gc # 引入核心工具
 import re # 用於正規表達式處理 Emoji
-import subprocess, tempfile # 💡 新增：用於本機執行 FFmpeg 過境壓縮
+import subprocess, tempfile # 💡 用於本機執行 FFmpeg 過境壓縮
 from datetime import datetime, timezone # 處理時間戳
 from supabase import create_client # 資料庫連線工具
 from prompt_templates import build_prompt
-from mission_janitor import run_janitor # 💡 新增：匯入戰場清道夫模組
+from mission_janitor import run_janitor # 💡 匯入戰場清道夫模組
 
 # =========================================================
 # ⚙️ 初始化配置與連線
@@ -134,19 +136,25 @@ def call_gemini_with_fallback(s, r2_path, prompt):
 
 
 # =========================================================
-# 🎙️ 通訊發報站 (報告封裝空投 - 終極除錯防禦版)
+# 🎙️ 通訊發報站 (報告封裝空投 - 透明容量標籤版)
 # =========================================================
-def send_rethink_report(s, title, result, used_model, original_command, listen_url, is_downgraded=False):
+# 💡 修改：新增 audio_size 參數
+def send_rethink_report(s, title, result, used_model, original_command, listen_url, is_downgraded=False, audio_size=0):
     """將翻譯結果、模型名稱、原始指令與聆聽連結封裝為 TXT 檔案"""
     safe_title = str(title).replace("*", "") 
     try:
         url_doc = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendDocument"
         
-        caption_msg = f"🔍 *【深度再思：情報完工】*\n📌 *主題：{safe_title}*\n🤖 *模型：{used_model}*\n⚙️ *指令：{original_command}*\n🎧 *音檔：* [點擊聽證]({listen_url})"
+        # 💡 新增：組合音檔大小的警告或提示標籤
+        size_label = f"({audio_size}MB)" if audio_size else "(大小未知)"
+        if audio_size > 25:
+            size_label += " ⚠️" # 大於 25MB 視為大檔，附上警告圖示
+        
+        caption_msg = f"🔍 *【深度再思：情報完工】*\n📌 *主題：{safe_title}*\n🤖 *模型：{used_model}*\n⚙️ *指令：{original_command}*\n🎧 *音檔：* [點擊聽證 {size_label}]({listen_url})"
         if is_downgraded:
             caption_msg += "\n⚠️ *狀態：觸發巨集認知防禦 (因應超長時數節目)*"
         
-        file_content = f"📌 主題：{safe_title}\n🤖 負責模型：{used_model}\n⚙️ 原始指令：{original_command}\n🎧 聆聽連結：{listen_url}\n"
+        file_content = f"📌 主題：{safe_title}\n🤖 負責模型：{used_model}\n⚙️ 原始指令：{original_command}\n🎧 聆聽連結：{listen_url} {size_label}\n"
         
         if is_downgraded:
             file_content += "⚠️ 系統防禦紀錄：系統偵測此音檔長度極長。已自動啟動巨集認知防禦，指示 AI 放棄瑣碎雜訊，將最高算力集中於核心指示。\n"
@@ -189,7 +197,7 @@ def send_rethink_report(s, title, result, used_model, original_command, listen_u
 def run_rethink_mission():
     """主程序：掃描 pending 任務並執行 AI 轉譯"""
     start_time = time.time() 
-    print(f"🚀 [TIME_ASSASSIN] V2.6 產線啟動，補救雷達與動態壓縮已掛載...") 
+    print(f"🚀 [TIME_ASSASSIN] V2.7 產線啟動，透明容量標籤與動態壓縮已掛載...") 
     
     start_jitter = random.uniform(2.0, 6.0) 
     print(f"🎲 [DB Jitter] 啟動冷卻 {start_jitter:.1f} 秒...")
@@ -261,7 +269,8 @@ def run_rethink_mission():
             
             if status_code == "SUCCESS":
                 sb.table("mission_reverse").update({"status": "completed", "result_text": final_text, "email_sent": True}).eq("id", t_id).execute() 
-                send_rethink_report(s, title, final_text, used_model, original_user_command, listen_url, is_downgraded) 
+                # 💡 修改：將 audio_size 傳遞給通訊發報站
+                send_rethink_report(s, title, final_text, used_model, original_user_command, listen_url, is_downgraded, audio_size) 
                 print(f"🎉 任務 {t_id[:8]} 完成！負責模型：{used_model}") 
             else:
                 sb.table("mission_reverse").update({"status": "failed_rate_limit", "error_log": status_code}).eq("id", t_id).execute() 
@@ -273,8 +282,6 @@ def run_rethink_mission():
         # 💡 新增：所有轉譯任務處理完畢後，派清道夫打掃戰場 (預設 60 天)
         # 若未來想改成 15 天，只需改成 run_janitor(sb, days_to_keep=15) 即可，主程式依舊乾淨！
         run_janitor(sb)
-
-
 
     except Exception as e:
         print(f"💥 [核心潰敗] 程序中斷: {str(e)}") 
