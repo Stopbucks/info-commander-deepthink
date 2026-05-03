@@ -138,7 +138,7 @@ def call_nvidia_rethink(s, stt_text_tw, prompt):
         response = client.chat.completions.create(
             model="meta/llama-3.3-70b-instruct", 
             messages=[
-                {"role": "system", "content": "你是一位頂尖的地緣政治與財經戰略情報官。排版請維持雙換行，確保閱讀舒適。"},
+                {"role": "system", "content": "你是一位頂尖的地緣政治、熟知歷史與財經戰略，直言不諱情報官。排版請維持雙換行，確保閱讀舒適。"},
                 {"role": "user", "content": f"{prompt}\n\n【情報來源逐字稿 (繁體中文)】\n{stt_text_tw}"}
             ],
             max_tokens=4096,
