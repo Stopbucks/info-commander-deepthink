@@ -1,18 +1,16 @@
 # =========================================================
-# 📝 任務簡報：GHA 議題深度再思產線 (Deep Rethink Mission)
+# 📝 任務簡報：GHA 議題深度再思產線 (Deep Rethink Mission V3.2)
 # ---------------------------------------------------------
 # 🎯 任務目標：
 #   當指揮官在 Telegram 對特定情報按下「回覆」並下達指令時，
 #   本工作流將被喚醒，調度 AI 執行逆向工程分析。
 #
 # ⚙️ 工作流程 (Workflow)：
-#   1. 接收觸發：來自 Vercel 的 Webhook 訊號 (Repository Dispatch)。
+#   1. 接收觸發：來自 Vercel 的 Webhook 訊號 (Repository Dispatch) 或定時巡邏。
 #   2. 環境部署：開啟 Ubuntu 虛擬機並配置 Python 3.10 環境。
-#   3. 套件補給：安裝 Supabase、Requests 與 HTTPX 等必要武裝。
-#   4. 核心執行：執行 deep_rethink_mission.py。
-#      - 從 Supabase 抓取任務 ID 與 Prompt。
-#      - 從 Cloudflare R2 下載對應音檔。
-#      - 召喚 Gemini 進行深度轉譯與分析。
+#   3. 套件補給：安裝系統級 FFmpeg 與 Python 必要武裝。
+#   4. 核心執行：執行 deep_rethink_mission.py (四檔狀態機)。
+#      - 依序處理：深思 (Llama+Gemini) -> 翻譯 (DeepSeek) -> 聽寫 (Whisper)。
 #      - 將結果寫回 Supabase 並打包 .txt 檔案空投至 Telegram。
 # =========================================================
 name: GHA Deep Rethink (Agenda Deepthink workflow)
@@ -22,7 +20,7 @@ on:
   repository_dispatch:
     types: [trigger-deep-rethink]
   
-  # 2. 定時巡邏：每日台北時間 05:43 啟動 (UTC 21:43)，處理漏網之魚
+  # 2. 定時巡邏：維持長官原設定 (UTC 21:43)，作為狀態機保底掃描
   schedule:
     - cron: '43 21 * * *'
     
@@ -59,10 +57,13 @@ jobs:
           WORKER_ID: "DEEP_RETHINK_STATION"
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}  
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}  
+          # 👇 -----(定位線) 以下新增 NVIDIA 金鑰以啟動三神兵 ----- 👇
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          # 👆 -------------------------------------------------- 👆
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}  
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}  
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}  
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}  
         run: |
-          # 啟動核心 Python 程式碼
+          # 啟動核心 Python 程式碼 (V3.2 狀態機與雙核引擎)
           python deep_rethink_mission.py
