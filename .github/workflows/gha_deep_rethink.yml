@@ -57,9 +57,10 @@ jobs:
           WORKER_ID: "DEEP_RETHINK_STATION"
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}  
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}  
-          # 👇 -----(定位線) 以下新增 NVIDIA 金鑰以啟動三神兵 ----- 👇
+          # 👇 ------------------------ ----- 👇
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          # 👆 -------------------------------------------------- 👆
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # 👆 ------------------------------ 👆
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}  
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}  
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}  
