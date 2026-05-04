@@ -15,10 +15,11 @@ from mission_janitor import run_janitor
 # 🎛️ 戰略控制面板 (Control Panel)
 # =========================================================
 class CONTROL_PANEL:
+    # 目前正式上線： 啟用雙核 同時先讓NVIDIA 摘要後，換GEMINI 摘要 
     # 測試階段 1：設定 NVIDIA 為主攻手 (True)，Gemini 關閉 (False)
     # 測試階段 2：設定 NVIDIA 關閉 (False)，Gemini 啟動 (True)
     ENABLE_NVIDIA_LLAMA = True
-    ENABLE_GEMINI_FALLBACK = False 
+    ENABLE_GEMINI_FALLBACK = True 
     
     # NVIDIA 要測試的模型陣列 (128K 巨胃怪獸)
     NVIDIA_MODELS = [
