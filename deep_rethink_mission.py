@@ -1,12 +1,10 @@
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V3.3 最終修復版)
-# 職責：處理 mission_reverse 任務，具備斷點續傳、語義切片與雙軌對照能力。
-# 特色：加入 @[斷句]@ 邊界標記，並預留 Gemini 全面接管的一鍵開關。
-# 修復：補齊狀態機總迴圈的 try-except 區塊。
+# 程式碼：deep_rethink_mission.py (V4.0 重裝雙軌版)
+# 職責：處理 mission_reverse 任務，跳過翻譯，直攻跨語言摘要。
+# 特色：搭載 Llama 128K 與 Gemini 降級梯隊，透過控制面板自由切換。
 # ---------------------------------------------------------
-import os, time, random, requests, gc
+import os, time, requests
 import re
-import subprocess, tempfile
 from datetime import datetime, timezone
 from supabase import create_client
 from openai import OpenAI 
@@ -14,10 +12,26 @@ from prompt_templates import build_prompt
 from mission_janitor import run_janitor
 
 # =========================================================
-# 🎛️ 戰略升級開關 (Future-Proof Switch)
+# 🎛️ 戰略控制面板 (Control Panel)
 # =========================================================
-# 若設為 True，即使長官只輸入 /A，也會強制啟動 Gemini 雙軌輔助。
-USE_GEMINI_AS_DEFAULT = False 
+class CONTROL_PANEL:
+    # 測試階段 1：設定 NVIDIA 為主攻手 (True)，Gemini 關閉 (False)
+    # 測試階段 2：設定 NVIDIA 關閉 (False)，Gemini 啟動 (True)
+    ENABLE_NVIDIA_LLAMA = True
+    ENABLE_GEMINI_FALLBACK = False 
+    
+    # NVIDIA 要測試的模型陣列 (128K 巨胃怪獸)
+    NVIDIA_MODELS = [
+        "meta/llama-3.3-70b-instruct",
+        "meta/llama-3.1-70b-instruct"
+    ]
+    
+    # Gemini 降級梯隊 (當啟動 Gemini 時會依序輪詢)
+    GEMINI_MODELS = [
+        "gemini-2.5-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro"
+    ]
 
 # =========================================================
 # ⚙️ 初始化配置與連線
@@ -29,7 +43,7 @@ def get_secrets():
     return {
         "NVIDIA_KEY": os.environ.get("NVIDIA_API_KEY"), 
         "GEMINI_KEY": os.environ.get("GEMINI_API_KEY"),
-        "HF_TOKEN": os.environ.get("HF_TOKEN"), # 💡 新增：讀取 Hugging Face 金鑰
+        "HF_TOKEN": os.environ.get("HF_TOKEN"), 
         "R2_URL": (os.environ.get("R2_PUBLIC_URL") or "").rstrip('/'), 
         "TG_TOKEN": os.environ.get("TELEGRAM_BOT_TOKEN"), 
         "TG_CHAT": os.environ.get("TELEGRAM_CHAT_ID") 
@@ -39,257 +53,200 @@ def get_nvidia_client(api_key):
     return OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key)
 
 # =========================================================
-# 🛠️ 輔助工具：語義切片器 
-# =========================================================
-def split_text_semantically(text, target_size=1800):
-    """在接近 1800 字時，往回尋找最近的句點或換行符號進行完美斷句"""
-    chunks = []
-    while len(text) > target_size:
-        search_window = text[:target_size]
-        match = re.search(r'[.!?\n](?=\s|$)', search_window[::-1]) 
-        
-        if match:
-            cut_idx = target_size - match.start()
-        else:
-            cut_idx = target_size 
-            
-        chunks.append(text[:cut_idx].strip())
-        text = text[cut_idx:].strip()
-        
-    if text: chunks.append(text)
-    return chunks
-
-# =========================================================
-# 🧠 AI 火控中心 (NVIDIA + Gemini + HF 直讀)
+# 🧠 AI 火控中心 (HF 提領 + 跨語言深思)
 # =========================================================
 
 def fetch_stt_from_huggingface(s, task_id, created_at_str):
-    """[階段一：極速直讀] 從 Hugging Face 歸檔庫直接抓取已聽打的英文逐字稿"""
+    """[階段一] 從 Hugging Face 歸檔庫抓取英文逐字稿"""
     try:
-        year = created_at_str[:4]
-        month = created_at_str[5:7]
         short_id = task_id[:8]
+        base_date = datetime.strptime(created_at_str[:10], "%Y-%m-%d")
         
-        hf_url = f"https://huggingface.co/datasets/Hubonbon2025/fortress-intelligence-archive/raw/main/intel_archive/{year}/{month}/{short_id}.json"
-        
-        print(f"📡 [HF 尋標] 嘗試從歸檔庫提領逐字稿: {hf_url}")
-        
-        headers = {}
-        if s.get("HF_TOKEN"):
-            headers["Authorization"] = f"Bearer {s['HF_TOKEN']}"
+        # 尋找當月與前兩個月
+        target_months = []
+        for i in range(3):
+            m = base_date.month - i
+            y = base_date.year
+            while m <= 0:
+                m += 12; y -= 1
+            target_months.append(f"{y}/{m:02d}")
             
-        resp = requests.get(hf_url, headers=headers, timeout=30)
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            stt_text = data.get("stt_text")
+        headers = {"Authorization": f"Bearer {s['HF_TOKEN']}"} if s.get("HF_TOKEN") else {}
             
-            if stt_text:
-                print("✅ [HF 尋標] 成功提取！免消耗額度獲得完整逐字稿。")
-                return stt_text, "SUCCESS"
+        for ym in target_months:
+            hf_url = f"https://huggingface.co/datasets/Hubonbon2025/fortress-intelligence-archive/raw/main/intel_archive/{ym}/{short_id}.json"
+            print(f"📡 [HF 尋標] 嘗試搜索座標: {ym} ({short_id}.json)")
+            resp = requests.get(hf_url, headers=headers, timeout=30)
+            if resp.status_code == 200:
+                stt_text = resp.json().get("stt_text")
+                if stt_text:
+                    print(f"✅ [HF 尋標] 成功提取歸檔！長度：{len(stt_text)} 字元")
+                    return stt_text, "SUCCESS"
+            elif resp.status_code == 404:
+                continue
             else:
-                return None, "JSON_FOUND_BUT_NO_STT"
-        elif resp.status_code == 404:
-            return None, "ARCHIVE_NOT_FOUND_404"
-        else:
-            return None, f"HF_HTTP_{resp.status_code}"
-            
+                return None, f"HF_HTTP_{resp.status_code}"
+        return None, "ARCHIVE_NOT_FOUND_IN_3_MONTHS"
     except Exception as e:
         return None, str(e)
 
-
-def call_nvidia_translate(s, english_text):
-    """[階段二] 呼叫 DeepSeek-flash 進行切片翻譯與標記植入"""
+def call_nvidia_rethink(s, stt_text_en, prompt):
+    """[階段二 A] 呼叫 Llama 跨語言摘要 (測試 128K 完整吞噬)"""
     client = get_nvidia_client(s['NVIDIA_KEY'])
-    chunks = split_text_semantically(english_text, target_size=1800)
-    translated_chunks = []
+    print(f"🧠 [深思 A] 啟動 NVIDIA Llama 跨語言深度摘要 (嘗試直吞全文)...")
     
-    sys_prompt = "你是一個精通繁體中文的頂級口譯員。請將以下英文逐字稿翻譯為流暢、具備母語語感的繁體中文。請保留講者的語氣，專注於語意準確，排版請適度保留段落換行，不需要加上任何解釋或標題。"
-    
-    print(f"🌐 [翻譯] 啟動 DeepSeek 翻譯，共分為 {len(chunks)} 個切片...")
-    try:
-        for i, chunk in enumerate(chunks):
-            print(f"   ⏳ 處理切片 {i+1}/{len(chunks)}...")
+    last_error = ""
+    for model_name in CONTROL_PANEL.NVIDIA_MODELS:
+        print(f"   🎯 嘗試呼叫模型: {model_name}...")
+        try:
             response = client.chat.completions.create(
-                model="deepseek-ai/deepseek-v4-flash", 
+                model=model_name, 
                 messages=[
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": chunk}
+                    {"role": "system", "content": "你是一位頂尖的情報官。請閱讀以下【英文原稿】，並直接以「繁體中文」回答使用者的問題。排版請維持雙換行，確保閱讀舒適。"},
+                    {"role": "user", "content": f"{prompt}\n\n【英文原稿】\n{stt_text_en}"} # 💡 這次我們不切片，整包丟給 128K 模型！
                 ],
-                max_tokens=4096,
-                temperature=0.3
+                max_tokens=4096, temperature=0.7, timeout=120 # 設定 120 秒防卡死
             )
-            translated_chunks.append(response.choices[0].message.content.strip())
-            time.sleep(1.5) 
+            result_text = response.choices[0].message.content.strip()
+            return f"*(本戰報由 NVIDIA {model_name.split('/')[-1]} 生成)*\n\n" + re.sub(r'(?<!\n)\n(?!\n)', '\n\n', result_text), "SUCCESS"
+        
+        except Exception as e:
+            print(f"   ⚠️ 模型 {model_name} 連線異常/逾時: {e}")
+            last_error = str(e)
+            continue
             
-        # 💡 植入 @[斷句]@ 標誌，並使用雙換行確保閱讀舒適度
-        final_translation = "\n\n@[斷句]@\n\n".join(translated_chunks)
-        return final_translation, "SUCCESS"
-    except Exception as e:
-        print(f"❌ [翻譯 失敗]: {e}")
-        return None, str(e)
+    print("❌ [深思 A 失敗]: 所有 NVIDIA 模型均無回應或發生超時 (Payload 可能過大)。")
+    return None, f"ALL_NVIDIA_FAILED: {last_error}"
 
-def call_nvidia_rethink(s, stt_text_tw, prompt):
-    """[階段三 A 路徑] 呼叫 Llama-3.3-70B 進行中文切片深度摘要"""
-    client = get_nvidia_client(s['NVIDIA_KEY'])
-    print("🧠 [深思 A] 啟動 Llama-3.3-70B 深度摘要...")
+def call_gemini_rethink(s, stt_text_en, prompt):
+    """[階段二 B] 呼叫 Gemini 跨語言摘要 (搭載降級梯隊)"""
+    print("🧠 [深思 B] 啟動 Gemini 降級梯隊，準備全文跨語言摘要...")
     
-    try:
-        response = client.chat.completions.create(
-            model="meta/llama-3.3-70b-instruct", 
-            messages=[
-                {"role": "system", "content": "你是一位頂尖的地緣政治、熟知歷史與財經戰略，直言不諱情報官。排版請維持雙換行，確保閱讀舒適。"},
-                {"role": "user", "content": f"{prompt}\n\n【情報來源逐字稿 (繁體中文)】\n{stt_text_tw}"}
-            ],
-            max_tokens=4096,
-            temperature=0.7
-        )
-        result_text = response.choices[0].message.content.strip()
-        result_text = re.sub(r'(?<!\n)\n(?!\n)', '\n\n', result_text) # 強制舒適雙換行
-        return result_text, "SUCCESS"
-    except Exception as e:
-        print(f"❌ [深思 A 失敗]: {e}")
-        return None, str(e)
-
-def call_gemini_text_rethink(s, stt_text_en, prompt):
-    """[階段三 B 路徑] 呼叫 Gemini-2.5-Flash 直吞英文原稿摘要"""
-    print("🧠 [深思 B] 啟動 Gemini-2.5-Flash 英文原稿直讀摘要...")
-    g_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={s['GEMINI_KEY']}"
-    
-    sys_prompt = "你是一位頂尖的地緣政治與財經戰略情報官。請根據以下提供的「英文逐字稿 (Raw STT)」，以「繁體中文」進行深度分析與回答。排版請維持雙換行。"
-    
+    sys_prompt = "你是一位頂尖的情報官。請吞噬以下超長【英文原稿】，精準掌握全域語意後，直接以「繁體中文」回答使用者的問題。排版請維持雙換行。"
     payload = {
-        "contents": [{"parts": [{"text": sys_prompt}, {"text": f"{prompt}\n\n【英文逐字稿 (Raw STT)】\n{stt_text_en}"}]}],
+        "contents": [{"parts": [{"text": sys_prompt}, {"text": f"{prompt}\n\n【英文原稿】\n{stt_text_en}"}]}],
         "generationConfig": {"temperature": 0.7}
     }
     
-    try:
-        resp = requests.post(g_url, json=payload, timeout=180)
-        if resp.status_code == 200:
-            result_text = resp.json()['candidates'][0]['content']['parts'][0].get('text', "").strip()
-            result_text = re.sub(r'(?<!\n)\n(?!\n)', '\n\n', result_text) 
-            return result_text, "SUCCESS"
-        else:
-            return None, f"HTTP {resp.status_code}"
-    except Exception as e:
-        return None, str(e)
+    last_error = ""
+    for model_name in CONTROL_PANEL.GEMINI_MODELS:
+        print(f"   🎯 嘗試呼叫模型: {model_name}...")
+        g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={s['GEMINI_KEY']}"
+        
+        try:
+            resp = requests.post(g_url, json=payload, timeout=180)
+            if resp.status_code == 200:
+                result_text = resp.json()['candidates'][0]['content']['parts'][0].get('text', "").strip()
+                return f"*(本戰報由 {model_name} 生成)*\n\n" + re.sub(r'(?<!\n)\n(?!\n)', '\n\n', result_text), "SUCCESS"
+            elif resp.status_code == 429:
+                print(f"   ⚠️ 模型 {model_name} 額度受限 (HTTP 429)，自動降級...")
+                last_error = f"HTTP 429: {model_name} Quota Exceeded"
+                continue
+            else:
+                print(f"   ⚠️ 模型 {model_name} 遭遇錯誤: HTTP {resp.status_code}")
+                last_error = f"HTTP {resp.status_code}"
+                continue
+        except Exception as e:
+            print(f"   ⚠️ 模型 {model_name} 連線異常: {e}")
+            last_error = str(e)
+            continue
+            
+    print("❌ [深思 B 失敗]: 所有 Gemini 梯隊均無回應或額度耗盡。")
+    return None, f"ALL_GEMINI_FAILED: {last_error}"
 
 # =========================================================
 # 🎙️ 通訊發報站 
 # =========================================================
-def send_rethink_report(s, title, result_nvidia, translation_text, result_gemini, original_command, listen_url):
-    """支援最多 3 個檔案的終極空投系統"""
+def send_rethink_report(s, title, result_nvidia, result_gemini, original_command, listen_url):
+    """只空投精華戰報，不再丟垃圾翻譯"""
     safe_title = str(title).replace("*", "") 
     url_doc = f"https://api.telegram.org/bot{s['TG_TOKEN']}/sendDocument"
     
-    model_name = "Llama-3.3-70B" + (" + Gemini-2.5" if result_gemini else "")
-    caption_msg = f"🔍 *【深度再思：情報完工】*\n📌 *主題：{safe_title}*\n🤖 *模型：{model_name}*\n⚙️ *指令：{original_command}*\n🎧 *音檔：* [點擊聽證]({listen_url})"
-    
-    # 檔案 1：Llama 戰報
-    report_content = f"📌 主題：{safe_title}\n🤖 模型：Llama-3.3-70B\n⚙️ 指令：{original_command}\n🎧 音檔：{listen_url}\n\n====================\n\n{result_nvidia}" 
-    report_file = {'document': (f"NVIDIA戰報_{safe_title[:15]}.txt", report_content.encode('utf-8'))}
-    
-    # 檔案 2：繁中逐字稿
-    transcript_file = {'document': (f"中文逐字稿_{safe_title[:15]}.txt", translation_text.encode('utf-8'))}
+    caption_msg = f"🔍 *【深度再思：情報完工】*\n📌 *主題：{safe_title}*\n⚙️ *指令：{original_command}*\n🎧 *音檔：* [點擊聽證]({listen_url})"
     
     try:
         print(f"📨 [通訊站] 開始空投戰報...")
-        requests.post(url_doc, data={'chat_id': s["TG_CHAT"], 'caption': caption_msg, 'parse_mode': 'Markdown'}, files=report_file, timeout=30) 
-        requests.post(url_doc, data={'chat_id': s["TG_CHAT"]}, files=transcript_file, timeout=30) 
+        # NVIDIA 戰報
+        if result_nvidia:
+            n_content = f"📌 主題：{safe_title}\n\n====================\n\n{result_nvidia}" 
+            requests.post(url_doc, data={'chat_id': s["TG_CHAT"], 'caption': caption_msg, 'parse_mode': 'Markdown'}, files={'document': (f"NVIDIA戰報_{safe_title[:15]}.txt", n_content.encode('utf-8'))}, timeout=30) 
         
-        # 檔案 3：Gemini 對照戰報 (若有觸發)
+        # Gemini 戰報
         if result_gemini:
-            gemini_content = f"📌 主題：{safe_title}\n🤖 模型：Gemini-2.5-Flash\n⚙️ 指令：{original_command}\n\n====================\n\n{result_gemini}"
-            gemini_file = {'document': (f"Gemini對照戰報_{safe_title[:15]}.txt", gemini_content.encode('utf-8'))}
-            requests.post(url_doc, data={'chat_id': s["TG_CHAT"]}, files=gemini_file, timeout=30) 
+            g_content = f"📌 主題：{safe_title}\n\n====================\n\n{result_gemini}"
+            requests.post(url_doc, data={'chat_id': s["TG_CHAT"], 'caption': caption_msg if not result_nvidia else "", 'parse_mode': 'Markdown'}, files={'document': (f"Gemini戰報_{safe_title[:15]}.txt", g_content.encode('utf-8'))}, timeout=30) 
             
-        print("✅ [通訊站] 所有檔案空投完畢！")
+        print("✅ [通訊站] 戰報空投完畢！")
     except Exception as e:
         print(f"💥 [通訊站] 發送失敗: {e}")
 
 # =========================================================
-# 🚀 任務總部署：四檔狀態機 
+# 🚀 任務總部署：V4 狀態機 (已移除翻譯階段)
 # =========================================================
 def run_rethink_mission():
-    print(f"🚀 [TIME_ASSASSIN V3.3] 四檔狀態機啟動 (搭載純文字極速引擎)...") 
+    print(f"🚀 [TIME_ASSASSIN V4.0] 狀態機啟動 (捨棄低效翻譯，直攻跨語言摘要)...") 
     sb = get_sb(); s = get_secrets() 
 
     try:
-        # 🎯 優先級 1：深思階段 (等待摘要)
-        res = sb.table("mission_reverse").select("*").eq("status", "awaiting_rethink").limit(1).execute()
+        # 🎯 優先級 1：深思階段 (將 awaiting_translation 合併視為可深思)
+        res = sb.table("mission_reverse").select("*").in_("status", ["awaiting_rethink", "awaiting_translation"]).limit(1).execute()
         if res.data:
             task = res.data[0]; t_id = task['id']
-            print(f"🎯 發現 awaiting_rethink 任務 ({t_id[:8]})")
+            print(f"🎯 發現待深思任務 ({t_id[:8]})")
             sb.table("mission_reverse").update({"status": "processing_rethink"}).eq("id", t_id).execute()
             
             raw_prompt = task.get('target_prompt', '')
-            # 💡 判斷是否啟動 Gemini (依據全域開關 或 指令字尾 G)
-            need_gemini = USE_GEMINI_AS_DEFAULT or bool(re.search(r'/[ABD]G', raw_prompt.upper()))
-            
             prompt = build_prompt(raw_prompt)
-            stt_text_tw = task.get('stt_text_tw', '')
-            stt_text_en = task.get('stt_text', '')
+            stt_text_en = task.get('stt_text', '') # 💡 直接拿英文原稿
             
-            # 執行 NVIDIA 主線
-            result_nvidia, status_code = call_nvidia_rethink(s, stt_text_tw, prompt)
+            result_nvidia, result_gemini = None, None
             
-            if status_code == "SUCCESS":
-                # 執行 Gemini 輔助線 (若符合條件)
-                result_gemini = None
-                if need_gemini and stt_text_en:
-                    result_gemini, _ = call_gemini_text_rethink(s, stt_text_en, prompt)
+            # 控制面板 1: 執行 NVIDIA 跨語言摘要
+            if CONTROL_PANEL.ENABLE_NVIDIA_LLAMA:
+                result_nvidia, n_status = call_nvidia_rethink(s, stt_text_en, prompt)
+            else:
+                n_status = "SKIPPED"
                 
-                sb.table("mission_reverse").update({"status": "completed", "result_text": result_nvidia, "email_sent": True}).eq("id", t_id).execute()
+            # 控制面板 2: 執行 Gemini 跨語言摘要
+            if CONTROL_PANEL.ENABLE_GEMINI_FALLBACK:
+                result_gemini, g_status = call_gemini_rethink(s, stt_text_en, prompt)
+            else:
+                g_status = "SKIPPED"
+            
+            # 若至少有一方成功，即視為任務完成
+            if n_status == "SUCCESS" or g_status == "SUCCESS":
+                sb.table("mission_reverse").update({"status": "completed", "result_text": result_nvidia or result_gemini, "email_sent": True}).eq("id", t_id).execute()
                 
                 # 取得基本資訊準備空投
                 q_res = sb.table("mission_queue").select("episode_title, r2_url").eq("id", task.get('task_id')).single().execute()
                 title = q_res.data.get('episode_title', '未知標題') if q_res.data else '未知標題'
                 listen_url = f"{s['R2_URL']}/{task.get('r2_url', '').lstrip('/')}"
                 
-                send_rethink_report(s, title, result_nvidia, stt_text_tw, result_gemini, raw_prompt, listen_url)
+                send_rethink_report(s, title, result_nvidia, result_gemini, raw_prompt, listen_url)
                 return 
             else:
-                sb.table("mission_reverse").update({"status": "awaiting_rethink", "error_log": f"Rethink Error: {status_code}"}).eq("id", t_id).execute()
+                sb.table("mission_reverse").update({"status": "awaiting_rethink", "error_log": "All Rethink Engines Failed"}).eq("id", t_id).execute()
                 return
 
-        # 🎯 優先級 2：翻譯階段
-        res = sb.table("mission_reverse").select("*").eq("status", "awaiting_translation").limit(1).execute()
-        if res.data:
-            task = res.data[0]; t_id = task['id']
-            print(f"🎯 發現 awaiting_translation 任務 ({t_id[:8]})")
-            sb.table("mission_reverse").update({"status": "processing_translation"}).eq("id", t_id).execute()
-            
-            translated_tw, status_code = call_nvidia_translate(s, task.get('stt_text', ''))
-            
-            if status_code == "SUCCESS":
-                sb.table("mission_reverse").update({"status": "awaiting_rethink", "stt_text_tw": translated_tw}).eq("id", t_id).execute()
-                print("✅ 翻譯完畢，推進至 awaiting_rethink。")
-            else:
-                sb.table("mission_reverse").update({"status": "awaiting_translation", "error_log": f"Trans Error: {status_code}"}).eq("id", t_id).execute()
-            return
-
-        # 🎯 優先級 3：歸檔提領階段 (原 STT 階段)
+        # 🎯 優先級 2：歸檔提領階段 (HF)
         res = sb.table("mission_reverse").select("*").eq("status", "awaiting_stt").limit(1).execute()
         if res.data:
             task = res.data[0]; t_id = task['id']; q_id = task.get('task_id')
             print(f"🎯 發現 awaiting_stt 任務 ({t_id[:8]})，啟動 HF 歸檔提領...")
             sb.table("mission_reverse").update({"status": "processing_stt"}).eq("id", t_id).execute()
             
-            # 💡 額外查詢母表 (mission_queue) 以獲取 created_at 來推算 YYYY/MM 資料夾
             q_res = sb.table("mission_queue").select("created_at").eq("id", q_id).single().execute()
-            
             if not q_res.data:
                 sb.table("mission_reverse").update({"status": "awaiting_stt", "error_log": "Queue Record Not Found"}).eq("id", t_id).execute()
                 return
                 
             created_at = q_res.data.get('created_at', '')
-            
-            # 呼叫全新的 HF 直讀函數
             stt_text, status_code = fetch_stt_from_huggingface(s, q_id, created_at)
             
             if status_code == "SUCCESS":
-                sb.table("mission_reverse").update({"status": "awaiting_translation", "stt_text": stt_text}).eq("id", t_id).execute()
-                print("✅ 逐字稿提領完畢，推進至 awaiting_translation。")
+                # 💡 提領成功後，直接跳過翻譯，推進至 awaiting_rethink
+                sb.table("mission_reverse").update({"status": "awaiting_rethink", "stt_text": stt_text}).eq("id", t_id).execute()
+                print("✅ 逐字稿提領完畢，跳過翻譯，直接推進至 awaiting_rethink。")
             else:
                 sb.table("mission_reverse").update({"status": "awaiting_stt", "error_log": f"HF Error: {status_code}"}).eq("id", t_id).execute()
             return
@@ -297,7 +254,6 @@ def run_rethink_mission():
         print("🛌 產線空閒，無待處理任務。")
         run_janitor(sb)
 
-    # 👇 -----(定位線) 新增核心崩潰防護網 ----- 👇
     except Exception as e:
         print(f"💥 [核心潰敗] 狀態機中斷: {str(e)}") 
 
