@@ -1,7 +1,8 @@
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V3.2 狀態機與 NIM/Gemini 雙引擎終極版)
+# 程式碼：deep_rethink_mission.py (V3.3 最終修復版)
 # 職責：處理 mission_reverse 任務，具備斷點續傳、語義切片與雙軌對照能力。
 # 特色：加入 @[斷句]@ 邊界標記，並預留 Gemini 全面接管的一鍵開關。
+# 修復：補齊狀態機總迴圈的 try-except 區塊。
 # ---------------------------------------------------------
 import os, time, random, requests, gc
 import re
@@ -210,7 +211,7 @@ def send_rethink_report(s, title, result_nvidia, translation_text, result_gemini
 # 🚀 任務總部署：四檔狀態機 
 # =========================================================
 def run_rethink_mission():
-    print(f"🚀 [TIME_ASSASSIN V3.2] 四檔狀態機啟動 (搭載雙引擎與智能升級開關)...") 
+    print(f"🚀 [TIME_ASSASSIN V3.3] 四檔狀態機啟動 (搭載純文字極速引擎)...") 
     sb = get_sb(); s = get_secrets() 
 
     try:
@@ -295,6 +296,10 @@ def run_rethink_mission():
 
         print("🛌 產線空閒，無待處理任務。")
         run_janitor(sb)
+
+    # 👇 -----(定位線) 新增核心崩潰防護網 ----- 👇
+    except Exception as e:
+        print(f"💥 [核心潰敗] 狀態機中斷: {str(e)}") 
 
 if __name__ == "__main__":
     run_rethink_mission()
