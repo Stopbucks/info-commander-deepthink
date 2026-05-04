@@ -27,7 +27,8 @@ def get_sb():
 def get_secrets():
     return {
         "NVIDIA_KEY": os.environ.get("NVIDIA_API_KEY"), 
-        "GEMINI_KEY": os.environ.get("GEMINI_API_KEY"), # 💡 包含 Gemini 金鑰
+        "GEMINI_KEY": os.environ.get("GEMINI_API_KEY"),
+        "HF_TOKEN": os.environ.get("HF_TOKEN"), # 💡 新增：讀取 Hugging Face 金鑰
         "R2_URL": (os.environ.get("R2_PUBLIC_URL") or "").rstrip('/'), 
         "TG_TOKEN": os.environ.get("TELEGRAM_BOT_TOKEN"), 
         "TG_CHAT": os.environ.get("TELEGRAM_CHAT_ID") 
@@ -58,45 +59,43 @@ def split_text_semantically(text, target_size=1800):
     return chunks
 
 # =========================================================
-# 🧠 AI 火控中心 (NVIDIA + Gemini)
+# 🧠 AI 火控中心 (NVIDIA + Gemini + HF 直讀)
 # =========================================================
 
-def call_nvidia_stt(s, r2_path):
-    """[階段一] 呼叫 Whisper-large-v3 進行聽打"""
-    client = get_nvidia_client(s['NVIDIA_KEY'])
-    url = r2_path if r2_path.startswith("http") else f"{s['R2_URL']}/{r2_path.lstrip('/')}"
-    
+def fetch_stt_from_huggingface(s, task_id, created_at_str):
+    """[階段一：極速直讀] 從 Hugging Face 歸檔庫直接抓取已聽打的英文逐字稿"""
     try:
-        print(f"📡 [STT] 下載音檔中: {url}")
-        raw_bytes = requests.get(url, timeout=120).content 
+        year = created_at_str[:4]
+        month = created_at_str[5:7]
+        short_id = task_id[:8]
         
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".raw") as tmp_raw:
-            tmp_raw.write(raw_bytes)
-            tmp_raw_path = tmp_raw.name
+        hf_url = f"https://huggingface.co/datasets/Hubonbon2025/fortress-intelligence-archive/raw/main/intel_archive/{year}/{month}/{short_id}.json"
         
-        tmp_mp3_path = tmp_raw_path + ".mp3"
-        subprocess.run(['ffmpeg', '-y', '-i', tmp_raw_path, 
-                        '-ar', '16000', '-ac', '1', 
-                        '-c:a', 'libmp3lame', '-b:a', '32k', 
-                        tmp_mp3_path], 
-                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"📡 [HF 尋標] 嘗試從歸檔庫提領逐字稿: {hf_url}")
         
-        print("🎙️ [STT] 啟動 NVIDIA Whisper 聽寫...")
-        with open(tmp_mp3_path, "rb") as audio_file:
-            transcript = client.audio.transcriptions.create(
-                file=audio_file,
-                model="openai/whisper-large-v3",
-                response_format="text"
-            )
+        headers = {}
+        if s.get("HF_TOKEN"):
+            headers["Authorization"] = f"Bearer {s['HF_TOKEN']}"
             
-        return transcript, "SUCCESS"
+        resp = requests.get(hf_url, headers=headers, timeout=30)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            stt_text = data.get("stt_text")
+            
+            if stt_text:
+                print("✅ [HF 尋標] 成功提取！免消耗額度獲得完整逐字稿。")
+                return stt_text, "SUCCESS"
+            else:
+                return None, "JSON_FOUND_BUT_NO_STT"
+        elif resp.status_code == 404:
+            return None, "ARCHIVE_NOT_FOUND_404"
+        else:
+            return None, f"HF_HTTP_{resp.status_code}"
+            
     except Exception as e:
-        print(f"❌ [STT 失敗]: {e}")
         return None, str(e)
-    finally:
-        if os.path.exists(tmp_raw_path): os.remove(tmp_raw_path)
-        if os.path.exists(tmp_mp3_path): os.remove(tmp_mp3_path)
-        del raw_bytes; gc.collect()
+
 
 def call_nvidia_translate(s, english_text):
     """[階段二] 呼叫 DeepSeek-flash 進行切片翻譯與標記植入"""
@@ -268,27 +267,34 @@ def run_rethink_mission():
                 sb.table("mission_reverse").update({"status": "awaiting_translation", "error_log": f"Trans Error: {status_code}"}).eq("id", t_id).execute()
             return
 
-        # 🎯 優先級 3：聽打階段
+        # 🎯 優先級 3：歸檔提領階段 (原 STT 階段)
         res = sb.table("mission_reverse").select("*").eq("status", "awaiting_stt").limit(1).execute()
         if res.data:
-            task = res.data[0]; t_id = task['id']
-            print(f"🎯 發現 awaiting_stt 任務 ({t_id[:8]})")
+            task = res.data[0]; t_id = task['id']; q_id = task.get('task_id')
+            print(f"🎯 發現 awaiting_stt 任務 ({t_id[:8]})，啟動 HF 歸檔提領...")
             sb.table("mission_reverse").update({"status": "processing_stt"}).eq("id", t_id).execute()
             
-            stt_text, status_code = call_nvidia_stt(s, task.get('r2_url'))
+            # 💡 額外查詢母表 (mission_queue) 以獲取 created_at 來推算 YYYY/MM 資料夾
+            q_res = sb.table("mission_queue").select("created_at").eq("id", q_id).single().execute()
+            
+            if not q_res.data:
+                sb.table("mission_reverse").update({"status": "awaiting_stt", "error_log": "Queue Record Not Found"}).eq("id", t_id).execute()
+                return
+                
+            created_at = q_res.data.get('created_at', '')
+            
+            # 呼叫全新的 HF 直讀函數
+            stt_text, status_code = fetch_stt_from_huggingface(s, q_id, created_at)
             
             if status_code == "SUCCESS":
                 sb.table("mission_reverse").update({"status": "awaiting_translation", "stt_text": stt_text}).eq("id", t_id).execute()
-                print("✅ 聽寫完畢，推進至 awaiting_translation。")
+                print("✅ 逐字稿提領完畢，推進至 awaiting_translation。")
             else:
-                sb.table("mission_reverse").update({"status": "awaiting_stt", "error_log": f"STT Error: {status_code}"}).eq("id", t_id).execute()
+                sb.table("mission_reverse").update({"status": "awaiting_stt", "error_log": f"HF Error: {status_code}"}).eq("id", t_id).execute()
             return
 
         print("🛌 產線空閒，無待處理任務。")
         run_janitor(sb)
-
-    except Exception as e:
-        print(f"💥 [核心潰敗] 狀態機中斷: {str(e)}") 
 
 if __name__ == "__main__":
     run_rethink_mission()
