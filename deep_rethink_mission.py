@@ -1,8 +1,8 @@
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V4.1 重裝雙軌版)
+# 程式碼：deep_rethink_mission.py (V4.2 最終極速版)
 # 職責：處理 mission_reverse 任務，跳過翻譯，直攻跨語言摘要。
 # 特色：搭載 Llama 128K 與 Gemini 降級梯隊，透過控制面板自由切換。
-# 更新：任務處理狀態校正，加入 while True: 迴圈
+# 更新：清除遺留的切片工具與多餘模組，實現極致輕量化。
 # ---------------------------------------------------------
 import os, time, requests
 import re
@@ -186,7 +186,7 @@ def send_rethink_report(s, title, result_nvidia, result_gemini, original_command
 # 🚀 任務總部署：V4 狀態機 (已移除翻譯階段，加入無盡渦輪)
 # =========================================================
 def run_rethink_mission():
-    print(f"🚀 [TIME_ASSASSIN V4.0] 狀態機啟動 (搭載無盡渦輪，自動推進檔位)...") 
+    print(f"🚀 [TIME_ASSASSIN V4.2] 狀態機啟動 (搭載無盡渦輪，自動推進檔位)...") 
     sb = get_sb(); s = get_secrets() 
 
     try:
