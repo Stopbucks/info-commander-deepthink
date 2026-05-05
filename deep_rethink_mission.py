@@ -1,7 +1,8 @@
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V4.0 重裝雙軌版)
+# 程式碼：deep_rethink_mission.py (V4.1 重裝雙軌版)
 # 職責：處理 mission_reverse 任務，跳過翻譯，直攻跨語言摘要。
 # 特色：搭載 Llama 128K 與 Gemini 降級梯隊，透過控制面板自由切換。
+# 更新：任務處理狀態校正，加入 while True: 迴圈
 # ---------------------------------------------------------
 import os, time, requests
 import re
@@ -182,78 +183,76 @@ def send_rethink_report(s, title, result_nvidia, result_gemini, original_command
         print(f"💥 [通訊站] 發送失敗: {e}")
 
 # =========================================================
-# 🚀 任務總部署：V4 狀態機 (已移除翻譯階段)
+# 🚀 任務總部署：V4 狀態機 (已移除翻譯階段，加入無盡渦輪)
 # =========================================================
 def run_rethink_mission():
-    print(f"🚀 [TIME_ASSASSIN V4.0] 狀態機啟動 (捨棄低效翻譯，直攻跨語言摘要)...") 
+    print(f"🚀 [TIME_ASSASSIN V4.0] 狀態機啟動 (搭載無盡渦輪，自動推進檔位)...") 
     sb = get_sb(); s = get_secrets() 
 
     try:
-        # 🎯 優先級 1：深思階段 (將 awaiting_translation 合併視為可深思)
-        res = sb.table("mission_reverse").select("*").in_("status", ["awaiting_rethink", "awaiting_translation"]).limit(1).execute()
-        if res.data:
-            task = res.data[0]; t_id = task['id']
-            print(f"🎯 發現待深思任務 ({t_id[:8]})")
-            sb.table("mission_reverse").update({"status": "processing_rethink"}).eq("id", t_id).execute()
-            
-            raw_prompt = task.get('target_prompt', '')
-            prompt = build_prompt(raw_prompt)
-            stt_text_en = task.get('stt_text', '') # 💡 直接拿英文原稿
-            
-            result_nvidia, result_gemini = None, None
-            
-            # 控制面板 1: 執行 NVIDIA 跨語言摘要
-            if CONTROL_PANEL.ENABLE_NVIDIA_LLAMA:
-                result_nvidia, n_status = call_nvidia_rethink(s, stt_text_en, prompt)
-            else:
-                n_status = "SKIPPED"
+        while True: # 💡 新增無盡渦輪迴圈
+            # 🎯 優先級 1：深思階段 
+            res = sb.table("mission_reverse").select("*").in_("status", ["awaiting_rethink", "awaiting_translation"]).limit(1).execute()
+            if res.data:
+                task = res.data[0]; t_id = task['id']
+                print(f"🎯 發現待深思任務 ({t_id[:8]})")
+                sb.table("mission_reverse").update({"status": "processing_rethink"}).eq("id", t_id).execute()
                 
-            # 控制面板 2: 執行 Gemini 跨語言摘要
-            if CONTROL_PANEL.ENABLE_GEMINI_FALLBACK:
-                result_gemini, g_status = call_gemini_rethink(s, stt_text_en, prompt)
-            else:
-                g_status = "SKIPPED"
-            
-            # 若至少有一方成功，即視為任務完成
-            if n_status == "SUCCESS" or g_status == "SUCCESS":
-                sb.table("mission_reverse").update({"status": "completed", "result_text": result_nvidia or result_gemini, "email_sent": True}).eq("id", t_id).execute()
+                raw_prompt = task.get('target_prompt', '')
+                prompt = build_prompt(raw_prompt)
+                stt_text_en = task.get('stt_text', '') 
                 
-                # 取得基本資訊準備空投
-                q_res = sb.table("mission_queue").select("episode_title, r2_url").eq("id", task.get('task_id')).single().execute()
-                title = q_res.data.get('episode_title', '未知標題') if q_res.data else '未知標題'
-                listen_url = f"{s['R2_URL']}/{task.get('r2_url', '').lstrip('/')}"
+                result_nvidia, result_gemini = None, None
                 
-                send_rethink_report(s, title, result_nvidia, result_gemini, raw_prompt, listen_url)
-                return 
-            else:
-                sb.table("mission_reverse").update({"status": "awaiting_rethink", "error_log": "All Rethink Engines Failed"}).eq("id", t_id).execute()
-                return
+                if CONTROL_PANEL.ENABLE_NVIDIA_LLAMA:
+                    result_nvidia, n_status = call_nvidia_rethink(s, stt_text_en, prompt)
+                else:
+                    n_status = "SKIPPED"
+                    
+                if CONTROL_PANEL.ENABLE_GEMINI_FALLBACK:
+                    result_gemini, g_status = call_gemini_rethink(s, stt_text_en, prompt)
+                else:
+                    g_status = "SKIPPED"
+                
+                if n_status == "SUCCESS" or g_status == "SUCCESS":
+                    sb.table("mission_reverse").update({"status": "completed", "result_text": result_nvidia or result_gemini, "email_sent": True}).eq("id", t_id).execute()
+                    
+                    q_res = sb.table("mission_queue").select("episode_title, r2_url").eq("id", task.get('task_id')).single().execute()
+                    title = q_res.data.get('episode_title', '未知標題') if q_res.data else '未知標題'
+                    listen_url = f"{s['R2_URL']}/{task.get('r2_url', '').lstrip('/')}"
+                    
+                    send_rethink_report(s, title, result_nvidia, result_gemini, raw_prompt, listen_url)
+                    continue # 💡 任務完成，繼續下一輪檢查
+                else:
+                    sb.table("mission_reverse").update({"status": "awaiting_rethink", "error_log": "All Rethink Engines Failed"}).eq("id", t_id).execute()
+                    continue # 💡 任務失敗，記錄後繼續下一輪檢查
 
-        # 🎯 優先級 2：歸檔提領階段 (HF)
-        res = sb.table("mission_reverse").select("*").eq("status", "awaiting_stt").limit(1).execute()
-        if res.data:
-            task = res.data[0]; t_id = task['id']; q_id = task.get('task_id')
-            print(f"🎯 發現 awaiting_stt 任務 ({t_id[:8]})，啟動 HF 歸檔提領...")
-            sb.table("mission_reverse").update({"status": "processing_stt"}).eq("id", t_id).execute()
-            
-            q_res = sb.table("mission_queue").select("created_at").eq("id", q_id).single().execute()
-            if not q_res.data:
-                sb.table("mission_reverse").update({"status": "awaiting_stt", "error_log": "Queue Record Not Found"}).eq("id", t_id).execute()
-                return
+            # 🎯 優先級 2：歸檔提領階段 (HF)
+            res = sb.table("mission_reverse").select("*").eq("status", "awaiting_stt").limit(1).execute()
+            if res.data:
+                task = res.data[0]; t_id = task['id']; q_id = task.get('task_id')
+                print(f"🎯 發現 awaiting_stt 任務 ({t_id[:8]})，啟動 HF 歸檔提領...")
+                sb.table("mission_reverse").update({"status": "processing_stt"}).eq("id", t_id).execute()
                 
-            created_at = q_res.data.get('created_at', '')
-            stt_text, status_code = fetch_stt_from_huggingface(s, q_id, created_at)
-            
-            if status_code == "SUCCESS":
-                # 💡 提領成功後，直接跳過翻譯，推進至 awaiting_rethink
-                sb.table("mission_reverse").update({"status": "awaiting_rethink", "stt_text": stt_text}).eq("id", t_id).execute()
-                print("✅ 逐字稿提領完畢，跳過翻譯，直接推進至 awaiting_rethink。")
-            else:
-                sb.table("mission_reverse").update({"status": "awaiting_stt", "error_log": f"HF Error: {status_code}"}).eq("id", t_id).execute()
-            return
+                q_res = sb.table("mission_queue").select("created_at").eq("id", q_id).single().execute()
+                if not q_res.data:
+                    sb.table("mission_reverse").update({"status": "awaiting_stt", "error_log": "Queue Record Not Found"}).eq("id", t_id).execute()
+                    continue # 💡 找不到紀錄，繼續下一輪檢查
+                    
+                created_at = q_res.data.get('created_at', '')
+                stt_text, status_code = fetch_stt_from_huggingface(s, q_id, created_at)
+                
+                if status_code == "SUCCESS":
+                    sb.table("mission_reverse").update({"status": "awaiting_rethink", "stt_text": stt_text}).eq("id", t_id).execute()
+                    print("✅ 逐字稿提領完畢，跳過翻譯，直接推進至 awaiting_rethink。")
+                else:
+                    sb.table("mission_reverse").update({"status": "awaiting_stt", "error_log": f"HF Error: {status_code}"}).eq("id", t_id).execute()
+                continue # 💡 提領完畢，繼續下一輪檢查（會自動進入優先級 1）
 
-        print("🛌 產線空閒，無待處理任務。")
-        run_janitor(sb)
+            # 🎯 如果所有狀態都找不到任務，退出迴圈
+            print("🛌 產線空閒，無待處理任務。")
+            run_janitor(sb)
+            break # 💡 退出迴圈，結束 GHA 任務
 
     except Exception as e:
         print(f"💥 [核心潰敗] 狀態機中斷: {str(e)}") 
