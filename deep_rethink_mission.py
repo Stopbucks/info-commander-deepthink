@@ -1,9 +1,10 @@
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V4.3 信標對位精簡版)
+# 程式碼：deep_rethink_mission.py (V4.4 信標對位精簡版)
 # 職責：處理 mission_reverse 任務，跳過翻譯，直攻跨語言摘要。
 # 特色：搭載 Llama 128K 與 Gemini 降級梯隊，透過控制面板自由切換。
 # [V4.3 升級] 1. 極簡發報：配合 Vercel 的信標追蹤，直接輸出自帶 ID 的原生標題。
 # [V4.3 升級] 2. 渦輪安全閥：加入 MAX_LOOPS 限制，防止 API 異常時 GHA 無限空轉耗盡算力。
+# [V4.4 修改] 先後尋找supabase + HF 逐字稿
 # ---------------------------------------------------------
 import os, time, requests
 import re
@@ -55,10 +56,25 @@ def get_nvidia_client(api_key):
 # =========================================================
 # 🧠 AI 火控中心 (HF 提領 + 跨語言深思)
 # =========================================================
+# =========================================================
+# 🧠 AI 火控中心 (雙核提領 + 跨語言深思)
+# =========================================================
 
-def fetch_stt_from_huggingface(s, task_id, created_at_str):
-    """[階段一] 從 Hugging Face 歸檔庫抓取英文逐字稿"""
+def fetch_stt_smart_retrieval(sb, s, task_id, created_at_str):
+    """[階段一] 🚀 V4.4 雙核智能提領：先查 Supabase 庫存，若已歸檔再調閱 HF"""
     try:
+        # 🛡️ 第一防線：先檢查 Supabase 的 mission_intel 是否還有新鮮逐字稿
+        res = sb.table("mission_intel").select("stt_text").eq("task_id", task_id).single().execute()
+        if res.data and res.data.get("stt_text"):
+            stt_text = res.data["stt_text"]
+            # 如果還沒被 HF 抹除，就直接拿來用！
+            if stt_text != "[Archived_to_HF]":
+                print("✅ [雙核尋標] 成功從 Supabase 提取新鮮逐字稿！")
+                return stt_text, "SUCCESS"
+        
+        print("🧊 [雙核尋標] Supabase 文本已被歸檔，轉向 HF 檔案室調閱...")
+        
+        # 🛡️ 第二防線：進入 HF 尋找
         short_id = task_id[:8]
         base_date = datetime.strptime(created_at_str[:10], "%Y-%m-%d")
         
@@ -87,6 +103,7 @@ def fetch_stt_from_huggingface(s, task_id, created_at_str):
         return None, "ARCHIVE_NOT_FOUND_IN_3_MONTHS"
     except Exception as e:
         return None, str(e)
+        
 
 def call_nvidia_rethink(s, stt_text_en, prompt):
     """[階段二 A] 呼叫 Llama 跨語言摘要"""
@@ -218,11 +235,11 @@ def run_rethink_mission():
                     sb.table("mission_reverse").update({"status": "awaiting_rethink", "error_log": "All Rethink Engines Failed"}).eq("id", t_id).execute()
                     continue 
 
-            # 🎯 優先級 2：歸檔提領階段 (HF)
+            # 🎯 優先級 2：歸檔提領階段 (雙核提領)
             res = sb.table("mission_reverse").select("*").eq("status", "awaiting_stt").limit(1).execute()
             if res.data:
                 task = res.data[0]; t_id = task['id']; q_id = task.get('task_id')
-                print(f"🎯 [迴圈 {loops}] 發現 awaiting_stt 任務 ({t_id[:8]})，啟動 HF 歸檔提領...")
+                print(f"🎯 [迴圈 {loops}] 發現 awaiting_stt 任務 ({t_id[:8]})，啟動雙核提領...")
                 sb.table("mission_reverse").update({"status": "processing_stt"}).eq("id", t_id).execute()
                 
                 q_res = sb.table("mission_queue").select("created_at").eq("id", q_id).single().execute()
@@ -231,14 +248,16 @@ def run_rethink_mission():
                     continue 
                     
                 created_at = q_res.data.get('created_at', '')
-                stt_text, status_code = fetch_stt_from_huggingface(s, q_id, created_at)
+                
+                # 🚀 這裡修改：呼叫新的 fetch_stt_smart_retrieval，並傳入 sb
+                stt_text, status_code = fetch_stt_smart_retrieval(sb, s, q_id, created_at)
                 
                 if status_code == "SUCCESS":
                     sb.table("mission_reverse").update({"status": "awaiting_rethink", "stt_text": stt_text}).eq("id", t_id).execute()
                     print("✅ 逐字稿提領完畢，跳過翻譯，直接推進至 awaiting_rethink。")
                 else:
                     sb.table("mission_reverse").update({"status": "awaiting_stt", "error_log": f"HF Error: {status_code}"}).eq("id", t_id).execute()
-                continue 
+                continue
 
             print("🛌 產線空閒，無待處理任務。")
             run_janitor(sb)
