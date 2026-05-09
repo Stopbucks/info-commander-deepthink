@@ -1,10 +1,12 @@
 # ---------------------------------------------------------
-# 程式碼：deep_rethink_mission.py (V4.4 信標對位精簡版)
+# 程式碼：deep_rethink_mission.py (V4.5 防爆裝甲版)
 # 職責：處理 mission_reverse 任務，跳過翻譯，直攻跨語言摘要。
 # 特色：搭載 Llama 128K 與 Gemini 降級梯隊，透過控制面板自由切換。
 # [V4.3 升級] 1. 極簡發報：配合 Vercel 的信標追蹤，直接輸出自帶 ID 的原生標題。
 # [V4.3 升級] 2. 渦輪安全閥：加入 MAX_LOOPS 限制，防止 API 異常時 GHA 無限空轉耗盡算力。
-# [V4.4 修改] 先後尋找supabase + HF 逐字稿
+# [V4.4 升級] 雙核智能提領：先查 Supabase 庫存，若已被抹除再向 HF 檔案室調閱。
+# [V4.5 升級] 拆除致命陷阱：捨棄 .single() 改用 .limit(1) 避開 APIError 崩潰；
+#              提領失敗時標記為 stt_failed 踢出產線，徹底根除死亡無限迴圈！
 # ---------------------------------------------------------
 import os, time, requests
 import re
@@ -53,27 +55,29 @@ def get_secrets():
 def get_nvidia_client(api_key):
     return OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key)
 
-# =========================================================
-# 🧠 AI 火控中心 (HF 提領 + 跨語言深思)
-# =========================================================
+
 # =========================================================
 # 🧠 AI 火控中心 (雙核提領 + 跨語言深思)
 # =========================================================
 
 def fetch_stt_smart_retrieval(sb, s, task_id, created_at_str):
-    """[階段一] 🚀 V4.4 雙核智能提領：先查 Supabase 庫存，若已歸檔再調閱 HF"""
+    """[階段一] 🚀 V4.5 雙核智能提領 (防爆優化版)"""
     try:
-        # 🛡️ 第一防線：先檢查 Supabase 的 mission_intel 是否還有新鮮逐字稿
-        res = sb.table("mission_intel").select("stt_text").eq("task_id", task_id).single().execute()
-        if res.data and res.data.get("stt_text"):
-            stt_text = res.data["stt_text"]
+        # 🛡️ 第一防線：改用 limit(1) 取代 single()，防止資料庫找不到資料時引發 APIError 崩潰
+        res = sb.table("mission_intel").select("stt_text").eq("task_id", task_id).limit(1).execute()
+        if res.data and res.data[0].get("stt_text"):
+            stt_text = res.data[0]["stt_text"]
             # 如果還沒被 HF 抹除，就直接拿來用！
             if stt_text != "[Archived_to_HF]":
                 print("✅ [雙核尋標] 成功從 Supabase 提取新鮮逐字稿！")
                 return stt_text, "SUCCESS"
         
-        print("🧊 [雙核尋標] Supabase 文本已被歸檔，轉向 HF 檔案室調閱...")
+        print("🧊 [雙核尋標] Supabase 無可用文本，轉向 HF 檔案室調閱...")
         
+        # 防呆檢查：確保有時間戳記可以推算 HF 資料夾
+        if not created_at_str or len(created_at_str) < 10:
+            return None, "INVALID_CREATED_AT_DATE"
+
         # 🛡️ 第二防線：進入 HF 尋找
         short_id = task_id[:8]
         base_date = datetime.strptime(created_at_str[:10], "%Y-%m-%d")
@@ -102,7 +106,8 @@ def fetch_stt_smart_retrieval(sb, s, task_id, created_at_str):
                 return None, f"HF_HTTP_{resp.status_code}"
         return None, "ARCHIVE_NOT_FOUND_IN_3_MONTHS"
     except Exception as e:
-        return None, str(e)
+        print(f"💥 [雙核尋標內部崩潰]: {e}") # 讓真實的錯誤訊息浮出水面
+        return None, f"INTERNAL_ERROR: {str(e)}"
         
 
 def call_nvidia_rethink(s, stt_text_en, prompt):
@@ -193,7 +198,7 @@ def send_rethink_report(s, title, result_nvidia, result_gemini):
 # 🚀 任務總部署：V4 狀態機
 # =========================================================
 def run_rethink_mission():
-    print(f"🚀 [TIME_ASSASSIN V4.3] 狀態機啟動 (搭載無盡渦輪與安全閥)...") 
+    print(f"🚀 [TIME_ASSASSIN V4.5] 狀態機啟動 (搭載無盡渦輪與防爆裝甲)...") 
     sb = get_sb(); s = get_secrets() 
     loops = 0
     MAX_LOOPS = 5 # 🛡️ 安全閥：最多連續執行 5 個任務，防止 GHA 無限空轉耗盡算力
@@ -225,8 +230,8 @@ def run_rethink_mission():
                 if n_status == "SUCCESS" or g_status == "SUCCESS":
                     sb.table("mission_reverse").update({"status": "completed", "result_text": result_nvidia or result_gemini, "email_sent": True}).eq("id", t_id).execute()
                     
-                    q_res = sb.table("mission_queue").select("episode_title").eq("id", task.get('task_id')).single().execute()
-                    title = q_res.data.get('episode_title', '未知標題') if q_res.data else '未知標題'
+                    q_res = sb.table("mission_queue").select("episode_title").eq("id", task.get('task_id')).limit(1).execute()
+                    title = q_res.data[0].get('episode_title', '未知標題') if q_res.data else '未知標題'
                     
                     # 🚀 V4.3 升級：直接傳遞 title，不再傳遞 R2 URL 與 Original Command
                     send_rethink_report(s, title, result_nvidia, result_gemini)
@@ -242,21 +247,23 @@ def run_rethink_mission():
                 print(f"🎯 [迴圈 {loops}] 發現 awaiting_stt 任務 ({t_id[:8]})，啟動雙核提領...")
                 sb.table("mission_reverse").update({"status": "processing_stt"}).eq("id", t_id).execute()
                 
-                q_res = sb.table("mission_queue").select("created_at").eq("id", q_id).single().execute()
+                q_res = sb.table("mission_queue").select("created_at").eq("id", q_id).limit(1).execute()
                 if not q_res.data:
                     sb.table("mission_reverse").update({"status": "awaiting_stt", "error_log": "Queue Record Not Found"}).eq("id", t_id).execute()
                     continue 
                     
-                created_at = q_res.data.get('created_at', '')
+                created_at = q_res.data[0].get('created_at', '')
                 
-                # 🚀 這裡修改：呼叫新的 fetch_stt_smart_retrieval，並傳入 sb
+                # 🚀 這裡呼叫新的 fetch_stt_smart_retrieval
                 stt_text, status_code = fetch_stt_smart_retrieval(sb, s, q_id, created_at)
                 
                 if status_code == "SUCCESS":
                     sb.table("mission_reverse").update({"status": "awaiting_rethink", "stt_text": stt_text}).eq("id", t_id).execute()
                     print("✅ 逐字稿提領完畢，跳過翻譯，直接推進至 awaiting_rethink。")
                 else:
-                    sb.table("mission_reverse").update({"status": "awaiting_stt", "error_log": f"HF Error: {status_code}"}).eq("id", t_id).execute()
+                    # 🚀 V4.5 關鍵修復：提領失敗時，將狀態標記為 stt_failed，直接踢出產線，避免無限迴圈！
+                    print(f"⚠️ 提領失敗 ({status_code})，標記為 stt_failed，準備處理下一個任務。")
+                    sb.table("mission_reverse").update({"status": "stt_failed", "error_log": f"HF Error: {status_code}"}).eq("id", t_id).execute()
                 continue
 
             print("🛌 產線空閒，無待處理任務。")
